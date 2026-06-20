@@ -572,7 +572,85 @@ Concrete, testable stories that pin down the MVP. Each maps to the pillars/requi
 
 ---
 
-## 15. Sources
+## 15. Non-functional requirements & core values
+
+These are the **quality attributes** the system must hold — the "how well," independent of any
+single feature — and they are as binding as the functional requirements. The architecture
+(`ARCHITECTURE.md`) is what *satisfies* them; each NFR notes how.
+
+**Core values, one line each:** *frugal · reactive · robust · durable · self-cleaning ·
+async-correct · flexible · observable · testable · local-by-default.*
+
+- **NFR-1 — Performance & frugality.** A resource optimizer that itself hogs resources is
+  self-defeating, so the orchestrator must be **lean**. *Targets:* small resident footprint at idle
+  (daemon ≈ tens of MB RAM, ~0% CPU when idle); orchestration overhead (admission + enforcement +
+  sampling) a low single-digit % of a task's wall-clock; CLI cold-start fast enough to be invisible
+  in a hook (~tens of ms); sustain dozens of concurrent runs + many live stream subscribers without
+  lag. *Satisfied by:* Rust/Tokio (no GC, static binary), cgroup-file sampling, SSE push.
+
+- **NFR-2 — Reactivity / real-time.** State changes — `queued→running→done`, log lines, metrics,
+  system pressure — propagate to every observer **near-instantly via push, not poll** (perceptually
+  sub-second end-to-end). Real-time progress monitoring is a **first-class value**, not an add-on;
+  the system is event-driven inside and out. *Satisfied by:* internal `watch`/`broadcast` event bus
+  → SSE; no polling loops in the hot path; reactive admission/preemption on pressure signals.
+
+- **NFR-3 — Robustness & reliability (long-lived daemon).** The daemon runs for days/weeks. A
+  failing, hung, or misbehaving task must **never crash the daemon or take down the machine** —
+  faults are isolated, and the system degrades gracefully (back-pressure, then preemption). It is
+  **crash-only friendly:** on restart it reconstructs consistent state from the DB, with no run left
+  in a torn state and **no orphaned child processes**. *Target:* zero daemon crashes from task
+  faults; full recovery across restarts.
+
+- **NFR-4 — Durability & data integrity (ACID).** All history and config is persisted
+  **transactionally (SQLite WAL = ACID)** — no lost, duplicated, or corrupted records across
+  restarts or power loss. State transitions are **atomic and consistent**: the run state machine is
+  enforced and illegal transitions rejected; idempotent submission prevents double-enqueue; logs are
+  durably written to disk with metadata in the DB. *Satisfied by:* SQLite WAL, a typed state machine,
+  idempotency keys.
+
+- **NFR-5 — Deterministic resource management & cleanup (RAII).** Because it is a long-lived daemon,
+  **every acquired resource** — child processes, cgroup scopes, file descriptors, log writers,
+  sockets, DB connections, channels, in-flight async tasks — is owned by a guard and released
+  **deterministically (RAII / `Drop`)** on success, cancel, timeout, error, *or* shutdown. Killing a
+  run reliably tears down its **entire process tree + cgroup** (no orphans); graceful shutdown drains
+  and persists in-flight state. *Targets:* stable memory/fd/handle counts over multi-day uptime (no
+  growth); zero orphaned processes or cgroups after cancel/crash.
+
+- **NFR-6 — Asynchronous, concurrency-correct foundations.** Async-first (Tokio), built on
+  **robust, deliberately-chosen concurrency primitives and data structures**: bounded channels with
+  back-pressure, single-owner mutable scheduler state (no lock contention / deadlock), a typed state
+  machine, immutable event records. Rust's type system guarantees **no data races**; every spawned
+  task has a clear owner and cancellation path (structured concurrency). *Value:* invest in solid
+  core types (`Run`, `RunId`, state & decision enums, channel topology) **before** features — the
+  right primitives are the foundation everything else is built on.
+
+- **NFR-7 — Flexibility & customizability.** Everything operationally meaningful is configurable
+  **live, with no recompile or restart**: budgets, concurrency, per-task policies, exclusive locks,
+  thresholds, presets, notifications, retention. Sensible hardcoded defaults, full override from the
+  UI, instant apply. *Value:* the tool bends to the user's machine and workflow, not vice-versa.
+  *Satisfied by:* config-as-data in SQLite (PRD §H, ARCH §17).
+
+- **NFR-8 — Observability of itself & debuggability.** The governor must not be a black box:
+  structured tracing/logs, a health/status surface, **recorded scheduler decisions + reasons**, and
+  a debuggable API (curl-able SSE, OpenAPI/Scalar docs). Optional Prometheus export later.
+
+- **NFR-9 — Maintainability & testability.** A pure, platform-free core (ports & adapters) makes the
+  scheduler/policy **deterministically unit-testable** (fake clock, in-memory adapters); the
+  no-platform-deps-in-core invariant is CI-enforced; changes stay local behind traits. (ARCH §13.)
+
+- **NFR-10 — Security & least privilege (local).** Runs as the user, **no root by default** (cgroup
+  governance via delegated user controllers); control plane is **local-only** (UDS + loopback+token,
+  Origin-checked). Trusted single-user model — resource safety, not hostile-tenant isolation.
+  (ARCH §19.)
+
+- **NFR-11 — Scalability (single-machine envelope).** Handle the realistic ceiling — tens of
+  concurrent agents, hundreds of queued runs, tens of thousands of history rows, multiple live
+  dashboards — with indexed queries and bounded memory. Not distributed; "scale" = one fully-utilized
+  workstation.
+
+---
+
+## 16. Sources
 
 - AgentCgroup (eBPF resource control for AI agents) — https://github.com/eunomia-bpf/agentcgroup · https://arxiv.org/pdf/2602.09345
 - CPU-centric perspective on agentic AI execution — https://arxiv.org/html/2511.00739v3
