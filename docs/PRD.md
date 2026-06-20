@@ -502,54 +502,9 @@ The smallest thing that stops the thrashing and gives visibility.
 
 ---
 
-## 13. Feasibility analysis & build-vs-buy
+## 13. Risks & mitigations
 
-**Verdict: feasible, and not a solved problem.** The hard primitives already exist and are
-battle-tested; the novelty (and the work) is *fusing* them with agent-origin awareness, a
-shared budget, and the observability/history layer. No existing single tool does this.
-
-### 13.1 Is the core idea sound? Yes — and externally validated
-
-The exact pain — parallel agent workloads oversaturating a shared box, with **memory as the
-real bottleneck** and **highly bursty, unpredictable** demand — is documented in current
-research (incl. an eBPF resource controller, *AgentCgroup*, built for precisely this, reporting
-~15× peak-to-average memory spikes and that OS-level execution dominates task latency). This
-**de-risks the premise** and yields two concrete design inputs:
-- **Govern memory first.** Admission and preemption must be memory-aware, not just core-counting (B6, G3).
-- **Static per-task core pinning may underutilize** given burstiness — favor weighted fair-share
-  with a hard global cap (see 13.2).
-
-### 13.2 Resource governance — **buy the primitive (cgroups v2 / systemd), build the policy**
-
-Linux already gives us everything for enforcement; we should not reinvent it:
-- `systemd-run --scope -p CPUQuota= -p AllowedCPUs= -p CPUWeight= -p MemoryHigh= -p MemoryMax= …`
-  runs *any* command inside a cgroup v2 with CPU caps, **core pinning**, **fair-share weights**,
-  and **two-tier memory limits** (`high`=throttle, `max`=OOM) — no code, no container image.
-- A parent **slice** can cap the *whole* orchestrator's budget; per-run **scopes** subdivide it.
-- `--user` scopes + cgroup **delegation** likely let us do this **without root** for the common
-  case (to confirm — open question 7).
-- The **cgroup freezer** gives clean pause/resume for preemption (G3).
-
-What we build: the *policy brain* on top — budget math, admission, distribution, the queue,
-preemption decisions, and metric collection (read cgroup `*.stat` + `/proc`). This is the
-"Docker-for-tasks" experience without writing a container runtime.
-
-### 13.3 Existing tools surveyed (and why none suffices alone)
-
-| Tool / category | Covers | Missing for us |
-|---|---|---|
-| **GNU `parallel --semaphore` / `--load`, make jobserver** | Local concurrency cap, load-aware start | No per-task cgroup limits, no monitoring/history/UI, no agent origin, no remote submit |
-| **systemd-run / cgroups v2** | The enforcement primitive (CPU/mem/pin/weight) | No queue, no budget brain, no UI, no history, no agent semantics — *this is our foundation, not a competitor* |
-| **PM2 / supervisord / Logdy** | Process supervision, web UI, live log streaming, restart | Built for **daemons**, not transient governed tasks; no resource budget/queue/admission; no history-stats; closest prior art for **Pillar K** |
-| **Turborepo / Nx / Bazel (remote cache)** | Content-addressed input hashing → skip work (`SHA256(inputs)`), CAS | Tied to their own build graph; not a generic proxy; no resource governance/monitoring — *the model for Pillar I, not a substitute* |
-| **node_exporter + Prometheus + Grafana** | Excellent system metrics + dashboards | No task orchestration/governance; heavy stack; we want one integrated daemon — could *optionally* expose metrics to it later |
-| **Trigger.dev / Temporal / Celery / Dapr** | Queues, concurrency, durable jobs | Cloud/distributed, app-job oriented; not local-machine resource governance of shell pipelines with cgroups |
-| **AgentCgroup (research, eBPF)** | Kernel-level per-agent/tool-call resource control | Research prototype; control-only (no monitoring UI/history/proxy/queue/caching); validates premise & informs memory-first design |
-
-**Conclusion:** the space is a **fusion gap**. Every ingredient exists; the integrated,
-agent-aware, observable, history-keeping local orchestrator does not. Building it is justified.
-
-### 13.4 What's genuinely hard (risk register)
+### 13.1 What's genuinely hard (risk register)
 
 - **Preemption correctness (G3).** Pausing/killing under pressure without corrupting work or
   creating restart storms. Mitigate: start with *admission back-pressure only* (MVP), add
@@ -563,13 +518,13 @@ agent-aware, observable, history-keeping local orchestrator does not. Building i
 - **Overhead.** Spawning a scope + sampling per run must stay cheap relative to multi-second tasks (it is).
 - **mise graph coupling (A6/J).** mise internals/JSON shape may shift. Mitigate: opaque-proxy MVP first.
 
-### 13.5 mise compatibility — feasible
+### 13.2 mise compatibility — feasible
 
 mise supports file/TOML tasks with `depends`/`wait_for`, machine-readable `--json`, and
 `mise tasks deps [--dot]`. So: **MVP** proxies `mise run <task>` opaquely; **P2** introspects
 the dependency graph to render steps and (optionally) slice resources per step.
 
-### 13.6 Caching — promising but deferred for a reason
+### 13.3 Caching — promising but deferred for a reason
 
 The Turborepo model (`SHA256` over source+test+config+deps+command → local/remote cache hit)
 is proven and directly transferable to "two worktrees, same inputs → one run." But getting the
