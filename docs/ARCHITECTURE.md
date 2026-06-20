@@ -126,7 +126,7 @@ requirement. This also happens to be the *better* default given the PRD's bursti
 | Charts | **uPlot** (time-series) + lightweight lib (ECharts/Recharts) for pie/heatmap | uPlot = tiny, fast, canvas, built for streaming metrics |
 | Terminal log view | **xterm.js** (optional, later) | Only if ANSI/terminal fidelity matters; virtualized list first |
 | Styling/components | **Tailwind + shadcn/ui** | Fast, dense dashboard |
-| Shared types | **`ts-rs`** (generate TS from Rust DTOs) | OpenAPI/`utoipa` only if the API grows |
+| API client + types | **`utoipa` (+ `utoipa-axum`) → OpenAPI → Orval** | Generates the typed client **and** TanStack Query hooks/keys/mutations/errors from the spec; free interactive docs (`utoipa-scalar`). Supersedes `ts-rs` |
 | UI embedding | **`rust-embed`** | Bakes `apps/web/dist` into the binary → one artifact |
 | Crates (support) | serde, serde_json, thiserror, anyhow, tracing(+subscriber), uuid, time, clap | Standard backbone |
 
@@ -448,12 +448,36 @@ Infrastructure (`roch-db`, `roch-linux`, `roch-exec`, git/mise/notify backends).
 
 ---
 
-## 14. API contract & shared types
+## 14. API contract & client generation
 
-MVP: define DTOs once in Rust (`#[derive(Serialize, Deserialize)]`) and generate the TypeScript
-with **`ts-rs`** so the frontend stays in sync without hand-written types. Adopt `utoipa`/OpenAPI
-only if the surface grows — this is a local control plane, not a public SaaS API, so don't
-over-invest early.
+**Single source of truth = the Rust handlers.** The frontend needs far more than DTO types — it
+needs a typed client *and* the TanStack Query wiring (hooks, query keys, mutations, invalidation,
+typed errors). So we generate all of it from an OpenAPI spec rather than hand-rolling it.
+
+```
+Rust DTOs + #[utoipa::path] handlers  ──utoipa──▶  openapi.json  ──Orval──▶  typed client + TanStack Query hooks  ──▶  React
+```
+
+- **Backend:** annotate DTOs (`ToSchema`) and handlers (`#[utoipa::path]`), bind routes with
+  **`utoipa-axum`** so the route table and the spec **can't drift**, and serve the live spec at
+  `/api/openapi.json` plus interactive docs (**`utoipa-scalar`**) at `/api/docs` — a free API
+  explorer for debugging the daemon.
+- **Frontend:** **Orval** consumes `openapi.json` and generates the **typed fetch client + TanStack
+  Query hooks** (`useTasks`, `useCancelTask`, query keys, `invalidateQueries`, typed
+  request/response/error bodies). A custom Orval **mutator** injects the local token + base URL.
+  This is the win over `ts-rs`: we hand-roll the data-fetching layer *zero* times, not just the types.
+- **Keep in sync via a task:** `mise run gen:api` → dump `openapi.json` from the daemon (a tiny
+  `--dump-openapi` path, no running server needed) → run Orval into `apps/web/src/api/generated/`.
+  **Commit `openapi.json`** (deterministic, reviewable diffs; frontend regen needs no backend up).
+  Generated client is a build artifact — never hand-edited.
+- **Errors:** document a standard `ApiError` response schema on handlers so Orval emits typed errors.
+
+**SSE caveat (important):** OpenAPI/Orval model the **request/response + command surface**, *not*
+streaming. The live SSE streams (`/api/events`, `/api/tasks/:id/events`, `/api/system/stream`) stay
+**hand-written `EventSource`** code either way — but we still get typed *payloads*: define the SSE
+event envelope + payloads as **`utoipa` component schemas**, so Orval emits their TS types and the
+~30-line hand-written stream parser deserializes into them. Net: codegen for the REST plane, a
+sliver of glue for the push plane, **typed everywhere** — and `ts-rs` is no longer needed at all.
 
 ---
 
@@ -536,8 +560,9 @@ reason = "Full Playwright suite is too expensive for automatic agent execution."
 - **Pages:** Dashboard (running+queued), Queue, History (TanStack Table — sort/filter/paginate),
   Task detail (live logs + metrics + step breakdown later), System (node monitor), Stats, Settings
   (presets/policies/thresholds). Type-safe routes via TanStack Router.
-- **Data:** TanStack Query for REST reads; an **`EventSource`** per live view consuming the SSE
-  streams (`/api/events`, `/api/tasks/:id/events`, `/api/system/stream`).
+- **Data:** **Orval-generated TanStack Query hooks** (from the OpenAPI spec, §14) for all REST
+  reads/commands; hand-written **`EventSource`** consumers for the SSE streams (`/api/events`,
+  `/api/tasks/:id/events`, `/api/system/stream`), deserializing into utoipa-generated payload types.
 - **Charts:** **uPlot** for CPU/mem/queue-depth/runtime time-series; a light lib for pie/heatmap.
 - **Logs:** virtualized line list for MVP; **xterm.js** only if/when ANSI fidelity is wanted.
 - **Served by the daemon** (embedded `dist/`); dev uses Vite with `/api` + `/sse` proxied to the
@@ -595,7 +620,9 @@ caching, daemon manager (Pillar K), strict cpuset mode.
    here; defer.)
 3. **Preemption "importance" ranking** — by priority? age? resource hog? cache value? (PRD §12.4)
 4. **Stats: live SQL vs materialized rollups** — start live SQL, materialize if it gets slow.
-5. **Shared types: `ts-rs` vs OpenAPI** — `ts-rs` for MVP.
+5. **API contract: `ts-rs` vs `utoipa`+Orval** — **decided: `utoipa` → OpenAPI → Orval** (typed
+   client + TanStack Query hooks); `ts-rs` dropped. SSE payload types come from `utoipa` component
+   schemas; SSE plumbing stays hand-written. `utoipa-axum` binds routes to prevent spec drift.
 6. **Fingerprint/cache contract** — deferred to PRD Phase 3; correctness-first, opt-in.
 ```
 
