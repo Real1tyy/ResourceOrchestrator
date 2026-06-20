@@ -33,6 +33,20 @@
 6. **Resource control ramps in levels** (§7): concurrency + process groups + nice/ionice first,
    then systemd transient scopes (cgroup v2), then direct cgroup/D-Bus. Queueing and visibility
    are valuable on their own — the product is never blocked on perfect cgroup support.
+7. **Platform access lives behind ports (traits); the core is OS-agnostic.** Linux is the *only*
+   implementation today, but every OS/hardware touchpoint — process spawning, resource limits,
+   metrics, pressure signal, notifications, the control socket, even config paths — is reached
+   through a trait defined in the pure core and implemented by a Linux **adapter**.
+   `#[cfg(target_os)]` and platform crates are confined to adapter crates + the composition root —
+   **never** the domain, scheduler, or executor logic. This keeps us un-coupled so a **macOS**
+   adapter (later) or **broader Linux distro/hardware** support (much later) can slot in without
+   touching the brain. **Windows is not a target.** To be clear: the MVP builds, tunes, and tests
+   for **this exact Ubuntu box only** (§3) — the ports are cheap decoupling insurance, *not*
+   multi-platform support we implement now. Full treatment in **§13**.
+8. **No config files; config is data.** Defaults are hardcoded constants in source; everything
+   operational is edited in the frontend Settings and persisted in SQLite (applied live, no
+   restart). No TOML/YAML/dotfiles. Only a handful of bootstrap values (bind/port/socket/db path)
+   come from CLI flags/env. See **§17**.
 
 > These resolve PRD §12 open questions **#3 (transport), #7 (privilege model)**, and set the
 > direction for **#1, #2, #4**.
@@ -106,6 +120,15 @@ so they become an **opt-in "strict isolation" mode** behind a privileged helper 
 requirement. This also happens to be the *better* default given the PRD's burstiness finding
 (weights absorb 15× spikes better than rigid pinning).
 
+> **Scope note:** everything in this section informs the **Linux adapter** (§13), reached only
+> through platform-neutral ports. The core/scheduler never sees a cgroup or `/proc` path — so these
+> machine specifics can't leak into the portable brain.
+>
+> **MVP scope:** the MVP is deliberately built and tuned for *this exact Ubuntu machine* —
+> opinionated, not generalized. Portability (macOS, then broader Linux distros/hardware) is design
+> *intention* held in the ports and executed much later; **Windows is not a target**. We don't
+> generalize, test, or carry compatibility weight for other platforms now.
+
 ---
 
 ## 4. Technology stack (final)
@@ -166,11 +189,13 @@ The daemon builds a single Axum `Router` and serves it on:
   CLI/agents/hooks.** Local-only by construction; filesystem permissions *are* the auth; no port,
   no token, no origin checks needed.
 - **Loopback TCP** — `127.0.0.1:47777` (configurable). **For the browser** (and curl/debugging).
-  Bound to loopback only; protected by a **local token** (random, stored `0600` under
-  `$XDG_CONFIG_HOME/roch/`) and an **Origin allowlist** so a rogue page can't drive it.
+  Bound to loopback only; protected by a **local token** (random, persisted in SQLite, injected
+  into the served UI) and an **Origin allowlist** so a rogue page can't drive it.
 
 Both speak HTTP, so the CLI uses **HTTP-over-UDS** (hyper supports a UDS connector) and reuses the
-exact same routes the browser hits. No divergence.
+exact same routes the browser hits. No divergence. (The local socket sits behind a
+`ControlTransport` port (§13) — UDS now (and on macOS later); swappable without touching call
+sites if a platform ever needs a different local transport.)
 
 ### 6.2 CLI ↔ daemon: blocking and non-blocking
 
@@ -229,6 +254,12 @@ PUT    /api/preset/active         # switch preset
 ## 7. Linux resource-control layer (the hard part — ramped)
 
 This is the riskiest subsystem, so it is **levelled**. Each level is independently shippable.
+
+> **This whole section is the Linux *adapter* of the `ResourceController` / `ProcessExecutor` ports
+> (§13).** Level 1 (process groups + `nice`/`ionice`) doubles as the **portable
+> lowest-common-denominator backend** a future macOS adapter would start from; Levels 2–3 are
+> Linux-only enrichments exposed via the port's reported **capabilities**, so the scheduler
+> degrades gracefully where cgroups don't exist.
 
 ### Level 1 — concurrency + process groups + priority (MVP)
 
@@ -368,21 +399,21 @@ into SQLite (DB churn).
 
 ## 11. Persistence & data
 
-**SQLite (WAL)** holds: task runs, task events, queue/policy decisions, presets/config,
-resource rollups, and (optionally) materialized stats. **Files** hold raw logs. Layout:
+**SQLite (WAL)** holds: task runs, task events, queue/policy decisions, **all settings / presets /
+policies (§17) and the browser API token**, resource rollups, and (optionally) materialized stats.
+**Files** hold only raw logs. **No config files** (§17). Layout:
 
 ```
-$XDG_CONFIG_HOME/roch/config.toml          # config + presets + policies
-$XDG_CONFIG_HOME/roch/token                # browser API token (0600)
-$XDG_DATA_HOME/roch/roch.db                # SQLite (WAL)
-$XDG_DATA_HOME/roch/logs/<date>/<id>.log   # raw logs
+$XDG_DATA_HOME/roch/roch.db                # SQLite (WAL): runs+history + ALL config/settings + API token
+$XDG_DATA_HOME/roch/logs/<date>/<id>.log   # raw logs (files; metadata in DB)
 $XDG_CACHE_HOME/roch/                       # transient/cache (later)
 $XDG_RUNTIME_DIR/roch/roch.sock            # CLI control socket (0600)
 ```
 
+Bootstrap-only values (bind/port/socket/db path) come from CLI flags/env, not a file (§17).
 Schema migrations via `sqlx::migrate!` (checked-in `migrations/`). Core tables: `runs`,
-`run_events`, `run_metrics_rollup`, `presets`, `policies`, `repos` (derived dim). Index for the
-hot queries: history filters (state, task, repo, agent, time), and stats aggregations.
+`run_events`, `run_metrics_rollup`, `settings`, `presets`, `policies`, `repos` (derived dim). Index
+for the hot queries: history filters (state, task, repo, agent, time), and stats aggregations.
 
 ---
 
@@ -399,52 +430,100 @@ Daemon-internal only (local, single process — **no Kafka/NATS/Rabbit**, that w
 
 ---
 
-## 13. Crate & package layout
+## 13. Crate layout, ports & adapters (Ubuntu-first, decoupled for later portability)
 
-Start lean; split only when pain appears (don't over-engineer the boundaries on day one).
+**Principle (hexagonal / dependency inversion).** The domain depends on **abstractions, never on
+the OS**. Every OS- or hardware-specific capability is a **port** (a trait defined in the pure
+core); each platform supplies an **adapter** (an impl). Today there is exactly one adapter set —
+Linux — but the brain (`roch-core`: scheduler, policy, state machine) is written against ports, so
+a **macOS** adapter (later) or wider **Linux distro/hardware** support (much later) can be added
+**without touching the core** — **Windows is explicitly not a target**. This is SOLID's Dependency-Inversion + Interface-Segregation applied to portability.
+
+**Enforceable invariant (what keeps the promise honest):**
+- `roch-core` (scheduler/policy/domain) has **zero platform crates** (`nix`, `cgroups`, `sysinfo`,
+  `zbus`, `notify-rust`, …) and **zero `#[cfg(target_os)]`**. If it compiles for a target with no
+  adapter, the abstraction is clean.
+- `#[cfg(target_os)]` and all platform calls live **only** in adapter crates and the **composition
+  root** (`roch-daemon`/`roch-cli`), where the right adapter is selected and injected.
+- A CI check (deny platform crates in `roch-core`'s dependency tree) makes drift a build failure.
+
+**Guardrail — abstract at the capability seam, don't over-engineer.** Ports are defined at the
+level of *intent* ("limit this run to N cores", "pause it", "sample its usage", "notify the user"),
+never mechanism ("write `cgroup.freeze`"). We ship **one real adapter** and validate the seam by
+*compilation* (core builds platform-free) + tests against the trait — **not** by building unused
+second-platform adapters now (that risks baking Linux assumptions into a falsely-"generic" interface).
+Where a platform genuinely can't do something (no PSI on macOS, no hard mem cap), the port reports a
+**Capability** and the scheduler **degrades gracefully** instead of pretending all platforms are equal.
+
+### Port catalog (every OS/hardware touchpoint)
+
+| Port (trait) | Responsibility | Linux adapter (now) | Future adapter (macOS / other Linux) | Cap-gated |
+|---|---|---|---|---|
+| `ProcessExecutor` | spawn in isolated group/session, wire stdio, signal the tree | `setsid`+pgid, tokio | macOS POSIX (other Linux: identical) | no |
+| `ResourceController` | apply CPU/mem/io limits; freeze/resume; kill-all | cgroup v2 via `systemd-run`→D-Bus→files | macOS `taskpolicy`/QoS + `renice` (soft); other Linux: same cgroup v2 | **yes** |
+| `SystemProbe` | global CPU/mem/swap/disk/load snapshot | `sysinfo` + `/proc` | `sysinfo` is cross-platform | no |
+| `PressureSignal` | "system under pressure" reading | Linux **PSI** `/proc/pressure/*` | macOS: derive proxy from mem+swap+load | **yes** |
+| `TaskMetrics` | per-run resource sampling | scope cgroup files | macOS: PID-tree via `sysinfo` | no |
+| `Notifier` | desktop notification | `notify-rust` (D-Bus) | macOS `osascript`; or no-op + UI banner | **yes** |
+| `ControlTransport` | local CLI↔daemon socket | Unix domain socket | macOS: same UDS | no |
+| `PathsProvider` | config/data/runtime dirs | XDG (`directories`) | `directories` handles mac/win | no |
+| `GitMetadata` | repo/worktree/branch/sha/dirty | shell `git` | same (portable) | no |
+| `DiskUsageScanner` | free space + largest paths | `statvfs` + walk | per-OS free-space call | no |
+| `TaskRunner` | discover/run tasks | `mise` CLI | also enables `just`/`make`/`npm` later | no |
+| `Clock` | now/sleep (determinism) | real clock | — (test fake) | no |
+
+> `TaskRunner` and `Clock` show the discipline future-proofs more than the OS: we can swap the
+> **task runner** (mise → just/make) and make the **scheduler deterministically testable**, for the
+> same reason — depend on abstractions, not concretions.
+
+### Trait sketches (defined in `roch-core`, intent-level)
+
+```rust
+pub trait ProcessExecutor {
+    async fn spawn(&self, spec: ExecSpec) -> Result<RunningHandle>;        // own process group
+    async fn signal(&self, h: &RunningHandle, sig: Signal) -> Result<()>; // term/kill the tree
+}
+pub trait ResourceController {
+    fn capabilities(&self) -> ResourceCaps;                               // what THIS platform enforces
+    async fn apply(&self, h: &RunningHandle, lim: ResourceLimits) -> Result<ResourceHandle>;
+    async fn freeze(&self, h: &ResourceHandle, on: bool) -> Result<()>;   // cgroup.freeze | SIGSTOP | Job
+    async fn kill(&self, h: &ResourceHandle) -> Result<()>;               // cgroup.kill | tree-kill
+}
+pub trait SystemProbe    { async fn snapshot(&self) -> SystemSnapshot; }
+pub trait PressureSignal { fn supported(&self) -> bool; async fn read(&self) -> Pressure; }
+pub trait Notifier       { async fn notify(&self, n: Notification) -> Result<()>; }
+pub trait TaskRepository { async fn insert(&self, t: NewRun) -> Result<Run>;
+                           async fn set_state(&self, id: RunId, s: RunState) -> Result<()>; }
+```
+
+The scheduler consumes these as generics / `dyn` trait objects; it cannot name a cgroup, a `/proc`
+path, or `systemd`.
+
+### Workspace
 
 ```
 resource-orchestrator/
 ├─ Cargo.toml                 # workspace
 ├─ crates/
-│  ├─ roch-core/    # domain types, scheduler, policy, presets, state machine — PURE, no I/O
-│  ├─ roch-db/      # sqlx repositories + migrations  (TaskRepository, StatsRepository, …)
-│  ├─ roch-linux/   # system integration: sysinfo/PSI sampler, process trees, signals,
-│  │                #   nice/ionice, systemd-scope backend, (cgroup/D-Bus backends later)
-│  ├─ roch-exec/    # executor, supervisor, log capture, cancellation, timeouts
-│  ├─ roch-daemon/  # the daemon binary: Axum (UDS+TCP), AppState, scheduler loop,
-│  │                #   metrics worker, static-UI serving (rust-embed)
-│  └─ roch-cli/     # the `roch` binary: clap subcommands, UDS client, run/attach/logs/…
-├─ apps/
-│  └─ web/          # React + Vite dashboard → dist/ embedded into roch-daemon
+│  ├─ roch-core/    # domain + scheduler + policy + state machine + ALL PORT TRAITS — PURE, no platform deps
+│  ├─ roch-db/      # sqlx adapter: repositories + migrations
+│  ├─ roch-linux/   # LINUX ADAPTER: process groups, cgroup/systemd, PSI/sysinfo, nice/ionice, notify, UDS
+│  ├─ roch-exec/    # execution orchestration over the ProcessExecutor/ResourceController ports
+│  ├─ roch-daemon/  # COMPOSITION ROOT: Axum (UDS+TCP), wires adapters→core, scheduler loop, embeds UI
+│  └─ roch-cli/     # `roch` binary: clap, ControlTransport client
+│  # future (much later): roch-macos/ — additional adapter crate, same ports. No Windows.
+├─ apps/web/        # React + Vite dashboard → embedded into roch-daemon
 ├─ migrations/      # SQLite schema
-└─ docs/            # PRD, ARCHITECTURE, ADRs, specs
+└─ docs/            # PRD, ARCHITECTURE, ADRs
 ```
 
-**Trait boundaries that keep the core pure (infrastructure is swappable):**
+Start lean — don't split adapter crates prematurely; `roch-linux` holds all Linux adapters until a
+second platform actually arrives. What matters from day one is the **dependency direction**
+(core ← adapters) and the **no-platform-deps-in-core** invariant, not the crate count.
 
-```rust
-pub trait TaskRepository {
-    async fn insert(&self, t: NewRun) -> Result<Run>;
-    async fn set_state(&self, id: RunId, s: RunState) -> Result<()>;
-}
-pub trait Executor {
-    async fn spawn(&self, spec: ExecSpec) -> Result<RunningHandle>;
-}
-pub trait ResourceController {           // process-group | systemd-scope | cgroup
-    async fn apply(&self, pid: Pid, limits: ResourceLimits) -> Result<ResourceHandle>;
-    async fn freeze(&self, h: &ResourceHandle, on: bool) -> Result<()>;
-    async fn kill(&self, h: &ResourceHandle) -> Result<()>;
-}
-```
-
-**The rule:** the scheduler/domain in `roch-core` must not depend on Axum, SQLx, systemd, or React.
-That keeps the brain testable in isolation and lets the Linux backend evolve through Levels 1→3
-behind the `ResourceController` trait.
-
-**Layering:** API (Axum handlers, DTO validation, SSE) → Application (TaskService, QueueService,
-SchedulerService, PolicyService, MetricsService, ConfigService) → Domain (`roch-core`) →
-Infrastructure (`roch-db`, `roch-linux`, `roch-exec`, git/mise/notify backends).
+**Layering (dependencies point inward only):** API (Axum, DTO validation, SSE) → Application
+(TaskService, QueueService, SchedulerService, PolicyService, MetricsService, ConfigService) →
+Domain + Ports (`roch-core`) → Adapters (`roch-db`, `roch-linux`, git/mise/notify).
 
 ---
 
@@ -506,60 +585,56 @@ We *wrap and proxy* mise; we never replace it (PRD non-goal).
 
 ---
 
-## 17. Configuration (TOML)
+## 17. Configuration — defaults in source, edited in the UI, persisted in SQLite (no config files)
 
-```toml
-[daemon]
-host = "127.0.0.1"
-port = 47777
-socket = "$XDG_RUNTIME_DIR/roch/roch.sock"
+**No TOML/YAML/dotfiles.** Configuration is **hardcoded factory defaults in Rust source**, seeded
+into SQLite on first run, and from then on **everything is editable from the frontend Settings
+menu** and persisted in the DB. Edits take effect **live** (pushed through the `watch` channel — no
+restart). There is no on-disk config file to hand-edit or keep in sync.
 
-# Budgets leave headroom on a 32-core / 31 GiB box for the desktop + daemon.
-[presets.interactive]   # at the keyboard
-max_concurrent_tasks = 2
-cpu_cores_budget = 8
-memory_high_mb = 10000
-memory_max_mb  = 13000
+- **Defaults (source of truth for the *first* run):** a `roch_core::defaults` module of plain
+  constants — presets (interactive/balanced/heavy/overnight budgets), task policies, guardrail
+  thresholds, retention, sampling cadence. On boot, if the `settings`/`presets`/`policies` tables
+  are empty, seed them from these constants. **"Reset to defaults"** in the UI re-seeds from the
+  same constants.
+- **Runtime config (after first run):** lives only in SQLite, edited via Settings → `PUT /api/…` →
+  row update → `watch` broadcast → scheduler/sysmon pick it up immediately. Surfaces: presets &
+  active preset; per-task policies (allow/deny patterns, concurrency groups, exclusive locks,
+  timeouts); guardrail thresholds; notification prefs; log retention.
+- **Bootstrap-only (the chicken/egg minimum):** the few values needed *before* the DB is open —
+  bind host/port, socket path, DB path — come from **hardcoded defaults overridable by CLI flags /
+  env** (`roch daemon --port 47777 --db <path>`), never a file. Everything else is DB + UI.
 
-[presets.balanced]      # default
-max_concurrent_tasks = 4
-cpu_cores_budget = 16
-memory_high_mb = 16000
-memory_max_mb  = 20000
+Illustrative defaults *in source* (Rust constants, **not** a file):
 
-[presets.heavy]
-max_concurrent_tasks = 8
-cpu_cores_budget = 26
-memory_high_mb = 22000
-memory_max_mb  = 26000
+```rust
+// roch-core/src/defaults.rs  — seeds the DB on first run; "Reset to defaults" re-applies these.
+// Budgets leave headroom on a 32-core / 31 GiB box for the desktop + daemon.
+pub const PRESETS: &[Preset] = &[
+    Preset { name: "interactive", max_concurrent: 2,  cores: 8,  mem_high_mb: 10_000, mem_max_mb: 13_000 },
+    Preset { name: "balanced",    max_concurrent: 4,  cores: 16, mem_high_mb: 16_000, mem_max_mb: 20_000 },
+    Preset { name: "heavy",       max_concurrent: 8,  cores: 26, mem_high_mb: 22_000, mem_max_mb: 26_000 },
+    Preset { name: "overnight",   max_concurrent: 12, cores: 30, mem_high_mb: 26_000, mem_max_mb: 28_000 },
+];
 
-[presets.overnight]     # away
-max_concurrent_tasks = 12
-cpu_cores_budget = 30
-memory_high_mb = 26000
-memory_max_mb  = 28000
-
-[policies.tasks.pre-commit]
-allow = true
-max_concurrent = 2
-timeout_secs = 900
-
-[policies.tasks.integration-test]
-allow = true
-exclusive = true            # capacity-1 lock (optionally scope = "per-repo")
-
-[policies.tasks.playwright-full]
-allow = false
-reason = "Full Playwright suite is too expensive for automatic agent execution."
+pub const POLICIES: &[Policy] = &[
+    Policy::allow("pre-commit").max_concurrent(2).timeout_secs(900),
+    Policy::allow("integration-test").exclusive(),                 // capacity-1 lock (optional per-repo scope)
+    Policy::deny("playwright-full", "Full Playwright suite too expensive for automatic agent execution."),
+];
 ```
+
+Everything an operator can touch is reachable from the **Settings** UI; nothing requires editing a
+file or restarting the daemon.
 
 ---
 
 ## 18. Frontend architecture
 
 - **Pages:** Dashboard (running+queued), Queue, History (TanStack Table — sort/filter/paginate),
-  Task detail (live logs + metrics + step breakdown later), System (node monitor), Stats, Settings
-  (presets/policies/thresholds). Type-safe routes via TanStack Router.
+  Task detail (live logs + metrics + step breakdown later), System (node monitor), Stats, **Settings
+  — everything configurable** (presets, policies, guardrail thresholds, notifications, retention),
+  persisted to SQLite and applied live (§17). Type-safe routes via TanStack Router.
 - **Data:** **Orval-generated TanStack Query hooks** (from the OpenAPI spec, §14) for all REST
   reads/commands; hand-written **`EventSource`** consumers for the SSE streams (`/api/events`,
   `/api/tasks/:id/events`, `/api/system/stream`), deserializing into utoipa-generated payload types.
@@ -574,7 +649,8 @@ reason = "Full Playwright suite is too expensive for automatic agent execution."
 
 - **UDS** is the trust boundary for the CLI: `0600`, owner-only — no token needed.
 - **Loopback TCP** for the browser: bind `127.0.0.1` only, require a **local token** (random,
-  `0600`), validate **Origin**, reject remote. No `0.0.0.0`, ever.
+  persisted in SQLite, injected into the served UI), validate **Origin**, reject remote. No
+  `0.0.0.0`, ever.
 - Trusted single-user model (PRD §3.3) — this is resource safety + organization, **not** a
   hostile-tenant sandbox.
 
@@ -624,5 +700,11 @@ caching, daemon manager (Pillar K), strict cpuset mode.
    client + TanStack Query hooks); `ts-rs` dropped. SSE payload types come from `utoipa` component
    schemas; SSE plumbing stays hand-written. `utoipa-axum` binds routes to prevent spec drift.
 6. **Fingerprint/cache contract** — deferred to PRD Phase 3; correctness-first, opt-in.
-```
+7. **Portability seam (decided).** All OS/hardware access goes through ports (traits) in `roch-core`;
+   Linux adapters in `roch-linux`; `#[cfg(target_os)]` only at the composition root; a CI check
+   denies platform crates in `roch-core`. Build new-platform adapters *only when targeted* — no
+   speculation. (§13)
+8. **Config storage (decided).** No config files. Hardcoded defaults seed SQLite; all settings are
+   edited in the UI and persisted in the DB, applied live; bootstrap (bind/port/socket/db) via
+   CLI/env only. (§17)
 
