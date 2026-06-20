@@ -1,12 +1,14 @@
 # Resource Orchestrator — Product Requirements Document
 
-> **Status:** Draft v0.1 (brainstorm) · **Owner:** Real1ty · **Date:** 2026-06-20
+> **Status:** v1.0 — Finalized requirements (brainstorm fully captured) · **Owner:** Real1ty · **Date:** 2026-06-20
 > **Scope of this doc:** *What* and *why* (product requirements + feasibility + build-vs-buy).
 > Architecture, tech stack, and detailed API/schema design are tracked separately.
 
 ---
 
 ## 1. One-line pitch
+
+> **Working name / CLI aliases:** `roch` · `resource-orchestrator`
 
 A local, resource-aware **task-orchestrating proxy** for agentic engineering: AI agents
 (and humans) submit their build/lint/test/pre-commit pipelines to it instead of running
@@ -16,6 +18,15 @@ statistics** so slow loops can be measured and optimized.
 
 Think: **"Docker + systemd + a job queue + Grafana, fused into one daemon, purpose-built
 for the case where N coding agents share one workstation."**
+
+**Value proposition — three reinforcing pillars of value:**
+
+1. **Efficient resource utilization.** A shared budget + queue keeps N parallel agents from
+   thrashing the box, so heavy work runs reliably instead of oversaturating and flaking.
+2. **Monitoring & observability.** A single live view of *what the agents are actually doing* —
+   running/queued tasks, per-task resource use, streamed logs, system-wide saturation.
+3. **History & statistics.** Every run is recorded and aggregated, turning "pre-commit feels
+   slow" into measurable p50/p95-per-repo numbers you can optimize and re-measure against.
 
 ---
 
@@ -41,6 +52,11 @@ Concrete failure modes observed today:
   median/p95 runtime per task per repo, no way to see which step in a pipeline is the tight loop.
 - **Redundant work.** Two agents in two worktrees run the identical test suite against the
   identical code state, doubling load for one result.
+- **Fixed-resource / port collisions.** Beyond CPU/memory/disk I/O, parallel agents also
+  contend for *fixed* resources — TCP ports (two dev servers or test harnesses binding the same
+  port), a shared scratch DB, or a single GPU — where the conflict is binary, not gradual. These
+  cause hard failures ("address already in use", DB lock) that look like code bugs but are
+  contention artifacts. (Modeled via exclusive concurrency groups — see C5/C6.)
 
 **Resource Orchestrator** turns "every agent for itself" into a governed, observable,
 deduplicated shared service.
@@ -74,18 +90,47 @@ deduplicated shared service.
   existing runners like mise; we don't replace them).
 - **Security sandboxing against malicious code.** Isolation here is for *resource* safety and
   organization, not a hostile-multi-tenant security boundary (the agents are trusted).
+- **Replacing mise (or systemd for all services).** We *wrap and proxy* mise; daemon management
+  (Pillar K) augments systemd, it doesn't replace it system-wide.
+- **Auto-killing arbitrary external processes.** External load is *detected and surfaced*, never
+  auto-killed (see principle P2, §3.4). We only ever pause/kill tasks **we** own.
+- **Deferred / explicitly out for now:** GPU scheduling; eBPF-based process tracing; shared/remote
+  cache; team mode, web login/auth, cloud-hosted SaaS dashboard; plugin marketplace; deep semantic
+  test selection or automatic dependency-graph inference; perfect cache correctness for arbitrary
+  shell commands.
 
 ### 3.3 Operating constraints
 
 - Single user, single machine, trusted callers. Optimize for *self* first; open-source later.
 - Linux/Ubuntu, cgroups v2 unified hierarchy, systemd present.
 
+### 3.4 Product principles
+
+- **P1 — Git & task metadata are truth.** Record repo path, worktree, branch, commit SHA, dirty
+  state, and task metadata whenever available; every run is anchored to *where it came from*.
+- **P2 — Controlled tasks are safer than uncontrolled ones.** Auto-pause/kill applies **only to
+  tasks the orchestrator owns**. External load is surfaced, never auto-killed by default.
+- **P3 — Scheduling beats brute force.** Prefer queueing, fairness, budgets, and back-pressure
+  over letting every agent run immediately.
+- **P4 — History enables optimization.** This is not just a runner; it's a **feedback-loop
+  profiler** that reveals which tasks waste the most developer and agent time.
+- **P5 — Start simple, add correctness later.** MVP solves queueing, governance, execution, logs,
+  and history first. Perfect caching, sandboxing, and task-graph inference come later.
+
 ---
 
 ## 4. Users & primary use cases
 
-**Primary user:** the developer (you) orchestrating multiple coding agents locally.
-**Primary "clients":** AI agents (via hooks/SDK) and the developer via CLI/UI.
+**Primary user:** a power developer orchestrating multiple coding agents locally on Ubuntu —
+across **Rust, TypeScript, Python, and (future) Go** — using isolated git worktrees, frequent
+harness checks (format / lint / build / test / pre-commit / pre-stop / verification loops), and
+**mise** as the task runner. Wants aggressive automation *without* letting agents overload the box.
+**Primary "clients":** AI agents (Claude Code / Codex / terminal sessions, via hooks/SDK) and the
+developer via CLI/UI.
+
+**Secondary users:** open-source devs running multi-agent local workflows; teams with expensive
+monorepo verification; anyone wanting a local **"CI-lite" dashboard** (history, runtime, logs,
+resource usage) before pushing to real CI.
 
 Representative use cases:
 
@@ -107,6 +152,18 @@ Representative use cases:
 - **UC-7 — Daemon management (later).** A long-running dev server is registered as a managed
   daemon; the orchestrator starts/stops it, caps its resources, and streams its logs in the UI.
 
+Concrete submission shape (illustrative CLI; transport TBD in architecture phase):
+
+```bash
+roch run \
+  --repo  /home/real1ty/Programming/agentic-workflow \
+  --agent claude-session-auth-01 \
+  --task  pre-commit \
+  --tag   rust \
+  -- mise run pre-commit
+# blocks, streams logs, exits with the task's exit code
+```
+
 ---
 
 ## 5. Core concepts & terminology
@@ -117,12 +174,15 @@ Representative use cases:
 | **Run** | A single concrete invocation/instance of a task. The thing that gets queued, executed, recorded. Has a unique id. |
 | **Step / Subtask** | A child unit inside a run (e.g. `pre-commit` → `format`, `lint`, `test`). Recursively nestable. Individually timed/logged/resourced (later phase). |
 | **Daemon** | A long-running, non-terminating managed process (dev server, watcher). Monitored & resource-capped but never "succeeds". Separate category. (Later phase.) |
-| **Origin** | Where a run came from: repository path + worktree + (optional) git ref/SHA. |
-| **Caller / Agent identity** | Who submitted it (e.g. `agent-3`, `human`). Free-form, supplied at submit time. |
+| **Origin** | Where a run came from: repository path + worktree + branch + commit SHA + dirty state (whatever git exposes), plus working directory. |
+| **Caller / Agent identity** | Who submitted it (e.g. `claude-session-auth-01`, `human`). Free-form, supplied at submit time. |
 | **Tag** | Optional user labels on a run (e.g. `rust`, `frontend`, `e2e`). For filtering/grouping. |
 | **Resource Pool / Budget** | The global ceiling of CPU (cores) and memory the orchestrator may hand out to all tasks combined. |
-| **Slot** | A concurrency unit. Max-concurrent-tasks caps the number of simultaneously *running* runs. |
-| **Profile / Preset** | A named, swappable bundle of config (budget + concurrency + thresholds), e.g. `work`, `heavy`, `away`. |
+| **Slot** | A concurrency unit. Global max-concurrent-tasks caps the number of simultaneously *running* runs. |
+| **Concurrency group** | A *named* limit shared across runs (e.g. task-type `playwright` max 1; `integration-test` max 1 **per repo**; `db` max 1 **globally**). A group of capacity 1 is an **exclusive lock / mutex**. |
+| **Policy** | Rules deciding whether a run is allowed, queued, limited, denied, or requires approval. |
+| **I/O & scheduling priority** | Optional per-run `nice` (CPU scheduling) and `ionice` (disk I/O) niceness, layered on top of cgroup limits. |
+| **Profile / Preset / Resource Pool** | A named, swappable bundle of config (budget + concurrency + thresholds), e.g. `interactive`, `balanced`, `heavy`, `overnight`. |
 | **Fingerprint / Cache key** | A deterministic hash of a run's relevant inputs, used for caching & dedup. (Later phase.) |
 | **Admission** | The decision to move a run from `queued` to `running` based on available budget/slots. |
 | **Preemption** | Pausing/killing an admitted run to relieve system pressure. |
@@ -171,9 +231,12 @@ Organized into pillars. Each requirement tagged with a target phase
   (e.g. "2 cores, 2 GB"), bounded by the global budget.
 - **B6 (P2).** **Memory-aware admission.** Admission considers projected memory (from history,
   see §13.1) not just core count, because memory is the real bottleneck.
-- **B7 (P3).** **Allowlisting / authorization.** A configurable allowlist of permitted tasks
-  (by name/pattern/origin). Unauthorized submissions are rejected (e.g. `403 Forbidden`) and
-  recorded as `rejected`. (User framed it as "401/forbidden"; semantically **403**.)
+- **B7 (P3).** **Allow/deny authorization.** A configurable allow **and** deny list of tasks
+  (by name, command **pattern**, or origin); explicit deny patterns supported. Unauthorized
+  submissions are rejected (e.g. `403 Forbidden`), do not execute, and are recorded as `rejected`.
+  (User framed it as "401/forbidden"; semantically **403**.)
+- **B8 (MVP).** **I/O & process priority.** Optional per-run `nice` and `ionice` to keep the
+  desktop responsive, layered on top of the cgroup CPU/memory limits.
 
 ### Pillar C — Scheduling & queueing
 
@@ -183,6 +246,15 @@ Organized into pillars. Each requirement tagged with a target phase
   levels (P2+).
 - **C4 (P2).** **Dedup / join.** If an identical fingerprint (Pillar I) is already running,
   attach the new submission to the in-flight run; on completion, stream the result to all joiners.
+- **C5 (MVP).** **Per-task-type / per-group concurrency caps.** Named concurrency groups with
+  independent limits — e.g. global max 5, but `playwright` max 1, `rust-build` max 2,
+  `integration-test` max 1 **per repository**, `db`-dependent suites max 1 **globally**.
+  Concurrency groups also model **fixed/binary resources** (a TCP port, a scratch DB, a single
+  GPU): bind the contending runs to a capacity-1 group so they serialize instead of colliding.
+- **C6 (MVP).** **Exclusive resources (mutex).** A concurrency group of capacity 1 is a named
+  lock; contending runs **block in the queue** (the agent waits) rather than failing, and the UI
+  explains they are waiting on an exclusive resource. This is the core fix for flaky parallel
+  integration suites (UC-2 / US-5).
 
 ### Pillar D — Real-time monitoring & observability
 
@@ -190,7 +262,9 @@ Organized into pillars. Each requirement tagged with a target phase
 - **D2 (MVP).** Per running task: live CPU%, memory, elapsed time, origin repo, caller, tags,
   allocated limits.
 - **D3 (MVP).** **Live log streaming.** Click a run → stream its console output in real time
-  (WebSocket/SSE). Works for both running and replayed-from-history runs.
+  (WebSocket/SSE). Works for both running and replayed-from-history runs. Logs are **preserved
+  after completion**, **searchable**, **filterable by stdout/stderr**, downloadable/copyable, and
+  the stream stays stable across multi-minute runs.
 - **D4 (MVP).** Filtering/grouping in the live view by **origin repo**, **task type/name**,
   **caller/agent**, **tag**, **state**.
 - **D5 (MVP).** Aggregated repository list: every origin the orchestrator has seen, with counts.
@@ -206,12 +280,15 @@ Organized into pillars. Each requirement tagged with a target phase
 - **E2 (MVP).** **State machine** (see §7) recorded with transitions/timestamps.
 - **E3 (MVP).** History table with filtering by task name, state, exit code, origin, caller,
   tag, time range; and sorting.
-- **E4 (P2).** **Per-task statistics:** count, success rate, min/median/mean/p55/p95/max
-  runtime, resource averages — sliceable by origin/tag/time window.
+- **E4 (P2).** **Per-task statistics:** count, success rate, min/median/mean/**p75/p90/p95/p99**/max
+  runtime, **queue-wait** time, resource averages, and **runtime trend over time** — sliceable by
+  origin/tag/agent/time window; includes "slowest today", "most-run", and "most resource-heavy".
 - **E5 (P2).** **Visualizations:** timeline of runs over time, pie chart of time/resources by
   task, activity heatmap, success/failure breakdowns.
 - **E6 (P2).** **Problematic-task detection:** surface tasks with high failure rates, growing
-  runtime, or outlier resource use (heuristics over the stats + logs).
+  runtime, or outlier resource use (heuristics over the stats + logs). Includes **flaky-task
+  candidates** — tasks that intermittently pass/fail on the *same* input fingerprint, a strong
+  signal of contention-induced rather than code-induced failure.
 - **E7 (P2).** Log retention policy (size/age caps, compression) so history doesn't grow unbounded.
 
 ### Pillar F — System / node monitoring (node-exporter-like)
@@ -227,7 +304,9 @@ Organized into pillars. Each requirement tagged with a target phase
 
 - **G1 (MVP).** **Threshold notifications.** Configurable thresholds on CPU saturation, RAM
   remaining, swap activity, and **disk free** (e.g. "notify if free disk < 20 GB"). Emit a
-  notification when crossed.
+  notification when crossed. Each threshold supports a **"guard delay"** (sustained-breach
+  window / debounce + hysteresis) so notifications fire on genuine sustained pressure, not on
+  transient spikes, and don't flap repeatedly around the threshold.
 - **G2 (MVP).** **Admission blocker.** When the system is at/over a safety threshold (even from
   external load), stop admitting new runs.
 - **G3 (P2).** **Active preemption.** Under genuine pressure (esp. swap thrash / OOM risk),
@@ -242,8 +321,12 @@ Organized into pillars. Each requirement tagged with a target phase
 
 - **H1 (MVP).** **Config panel** to set: core budget, memory budget, max concurrency, and all
   Pillar-G thresholds — adjustable live ("knobs").
-- **H2 (MVP).** **Presets/profiles:** named bundles of the above, e.g. `work` (conservative,
-  ~10 cores), `heavy`/`away` (use everything). One-click switch.
+- **H2 (MVP).** **Presets/profiles:** named bundles of the above, switchable from UI **and** CLI,
+  affecting both scheduling and resource limits. Built-in set:
+  - `interactive` — fewer cores, low concurrency; protect desktop responsiveness.
+  - `balanced` — moderate concurrency (default).
+  - `heavy` — high concurrency / high CPU allocation.
+  - `overnight` — maximum safe resource usage (away from keyboard).
 - **H3 (P2).** Per-origin / per-task default policies (e.g. "`e2e` in repo X is capped at 2 cores").
 - **H4 (MVP).** Config persists across restarts; sane auto-detected defaults on first run.
 
@@ -269,9 +352,10 @@ Organized into pillars. Each requirement tagged with a target phase
 
 ### Pillar K — Daemon / long-running service management *(later phase)*
 
-- **K1 (P3).** Register **daemons** (long-running services) to be managed: start/stop, restart
-  policy, resource caps, log streaming, uptime & resource monitoring — a **GUI wrapper around
-  (or lightweight replacement for) systemd** for dev services. Separate category from tasks.
+- **K1 (P3).** Register **daemons** (long-running services) to be managed: start/stop, **start
+  on boot / autostart**, restart policy, resource caps, log streaming, uptime & resource
+  monitoring — a **GUI wrapper around (or lightweight replacement for) systemd** for dev
+  services. Separate category from tasks.
 - **K2 (P3).** Daemons appear in monitoring with uptime instead of completion, and obey the
   same global budget/guardrails.
 
@@ -317,10 +401,11 @@ Terminal states for stats: `SUCCEEDED`, `FAILED`, `KILLED`, `TIMED_OUT`, `CANCEL
 
 ## 8. Data model (high level — not final schema)
 
-- **Run** — id, task_name, command/args, origin (repo, worktree, sha?), caller, tags[],
-  state, exit_code, priority, requested_limits, granted_limits, fingerprint?, parent_run_id?,
-  timestamps {submitted, admitted, started, ended}, derived {queue_wait, exec_duration},
-  metrics {cpu_peak, cpu_avg, mem_peak, mem_avg}, log_ref.
+- **Run** — id, task_name, command, args, working_dir, origin {repo, worktree, branch, sha,
+  dirty}, caller, tags[], state, exit_code, priority, concurrency_group, requested_limits,
+  granted_limits {cores, mem, nice, ionice}, policy_decision, fingerprint?, dedup_group?,
+  parent_run_id?, timestamps {submitted, admitted, started, ended},
+  derived {queue_wait, exec_duration}, metrics {cpu_peak, cpu_avg, mem_peak, mem_avg}, log_ref.
 - **Step** — run_id (parent), name, command, state, exit_code, timings, metrics, log_ref, order/parallel-group.
 - **Daemon** — id, name, command, restart_policy, caps, state, started_at, log_ref. *(P3)*
 - **Origin / Repository** — derived dimension (path, display name), aggregated counts/stats.
@@ -346,6 +431,13 @@ Requirements the interface must satisfy:
 Candidate transports (to decide in architecture phase): a local HTTP/REST + WebSocket server,
 or a Unix-domain-socket RPC, fronted by the thin client (L1). Submission "block & sleep"
 maps cleanly onto either a long-lived streaming HTTP response or a submit-then-subscribe model.
+Conceptually the agent acts as a **publisher that submits work and waits** — a *message-broker /
+publish-and-wait* mental model: it parks with near-zero resource use until the orchestrator wakes
+it with the result, and a single completed run can **fan its result out to multiple waiting
+subscribers** (the dedup/join case, C4). The canonical blocking sequence is: (1) agent submits →
+(2) orchestrator accepts/rejects → (3) on accept, run may queue → (4) agent process blocks →
+(5) orchestrator runs the task under limits → (6) logs stream/buffer → (7) orchestrator returns
+exit code + stdout/stderr summary + result metadata → (8) agent unblocks and continues.
 
 **mise compatibility (A6):** mise exposes machine-readable task metadata
 (`mise tasks --json`, `mise tasks deps [--dot]`), so the orchestrator can either (a) opaquely
@@ -358,10 +450,10 @@ MVP does (a); (b) unlocks Pillar J.
 
 ### MVP (Phase 1) — "Governed, observed proxy"
 The smallest thing that stops the thrashing and gives visibility.
-- A1–A5 (submit/exec/block/cancel), B1–B5 (budget + cgroup limits + distribution),
-  C1–C3 (queue), D1–D5 (live monitoring + log stream + filters), E1–E3 (persist + history table),
-  F1–F2/F4 (node monitor), G1–G2 (threshold notify + admission blocker),
-  H1–H2/H4 (config + presets), L1–L2 (client + Claude Code hook).
+- A1–A5 (submit/exec/block/cancel), B1–B5 + B8 (budget + cgroup limits + distribution + nice/ionice),
+  C1–C3 + C5–C6 (queue + per-type/exclusive concurrency), D1–D5 (live monitoring + log stream +
+  filters), E1–E3 (persist + history table), F1–F2/F4 (node monitor), G1–G2 (threshold notify +
+  admission blocker), H1–H2/H4 (config + presets), L1–L2 (client + Claude Code hook).
 - **Definition of done:** 10 agents can submit pre-commit/test runs; the machine never
   oversaturates; everything is visible live and in history; presets switch budgets.
 
@@ -486,7 +578,46 @@ Hence Pillar I is **P3**, opt-in, and conservative.
 
 ---
 
-## 14. Sources
+## 14. User stories & acceptance criteria
+
+Concrete, testable stories that pin down the MVP. Each maps to the pillars/requirements above.
+
+- **US-1 — See running tasks** *(D1–D2)*. Dashboard lists every running task with name, agent,
+  repo, path, status, start time, duration, CPU, memory, tags; updates in real time.
+- **US-2 — See queued tasks** *(C2)*. Queue shows position, **reason for waiting**, requested
+  resources, agent, repo, and likely start order; queued tasks are cancellable.
+- **US-3 — Stream task logs** *(D3)*. Click a running task → live stdout/stderr; logs persist after
+  completion, are searchable, filterable by stream, downloadable; connection stable for long runs.
+- **US-4 — Enforce max concurrency** *(B2, C1, C5)*. Configurable global **and** per-task-type
+  concurrency; excess tasks queue and run when capacity frees.
+- **US-5 — Prevent integration-test overload** *(C6)*. `integration-test` can be marked exclusive;
+  extra runs block (agent waits, no failure); UI states it's waiting on an exclusive resource.
+- **US-6 — Limit task CPU & memory** *(B1, B4, B5)*. Configurable global + per-task CPU/memory
+  budgets, enforced at process start; a clear UI warning if limits can't be applied.
+- **US-7 — Switch presets** *(H2)*. Presets (`interactive`/`balanced`/`heavy`/`overnight`)
+  selectable from UI and CLI; they affect scheduling and limits.
+- **US-8 — Detect system pressure** *(F2, G1–G3)*. Samples CPU/RAM/swap/disk against configurable
+  thresholds; on breach can pause/cancel/block-new-starts — **only on owned tasks** — and shows
+  which external processes are consuming resources.
+- **US-9 — Record task history** *(E1–E2)*. Every accepted request becomes a persistent record;
+  finished runs include duration, status, exit code, logs, resource rollups; failed runs easy to
+  find; survives daemon restarts.
+- **US-10 — Analyze slow tasks** *(E4–E6)*. Sortable history table; totals by task/repo/agent;
+  per-task percentiles; slowest & failed runs; today-vs-previous-days comparison.
+- **US-11 — Integrate with mise** *(A6, L1)*. Runs arbitrary commands with first-class
+  `mise run <task>` examples; inspects available mise tasks when possible; records the mise task
+  name; preserves mise env by running from the correct working directory.
+- **US-12 — Deny unauthorized commands** *(B7)*. Allow task names/command patterns, deny patterns;
+  denied tasks return a clear forbidden result, don't execute, and are recorded.
+- **US-13 — Manual cancellation** *(A5)*. Cancel queued tasks; graceful terminate of running
+  tasks with force-kill of the process tree on timeout; final state records the cancellation reason.
+- **US-14 — Join duplicate requests** *(C4, I3)*. Optional cache/dedup key; a second request with a
+  key already running **joins** the first; both callers get the same result; UI shows joined
+  consumers; history records the join relationship.
+
+---
+
+## 15. Sources
 
 - AgentCgroup (eBPF resource control for AI agents) — https://github.com/eunomia-bpf/agentcgroup · https://arxiv.org/pdf/2602.09345
 - CPU-centric perspective on agentic AI execution — https://arxiv.org/html/2511.00739v3
@@ -494,4 +625,4 @@ Hence Pillar I is **P3**, opt-in, and conservative.
 - GNU Parallel semaphore & `--load`; make/Ninja jobserver — https://www.gnu.org/software/parallel/parallel_tutorial.html · https://www.gnu.org/software/make/manual/html_node/Job-Slots.html · https://blogs.gentoo.org/mgorny/2025/11/30/one-jobserver-to-rule-them-all/
 - PM2 / supervisord / Logdy (process supervision + web UI + log streaming) — https://github.com/oxdev03/pm2.web · https://logdy.dev/blog/post/supervisorctl-logs-viewer-and-web-ui
 - Turborepo / Bazel content-addressed caching — https://turborepo.dev/docs/crafting-your-repository/caching · https://bazel.build/remote/caching
-- mise tasks (deps, JSON, parallel) — https://mise.jdx.dev/tasks/ · https://mise.jdx.dev/tasks/architecture.html
+- mise tasks (deps, JSON, parallel) — https://mise.jdx.dev/tasks/ · https://mise.jdx.dev/tasks/architecture.html · https://mise.jdx.dev/tasks/file-tasks.html
