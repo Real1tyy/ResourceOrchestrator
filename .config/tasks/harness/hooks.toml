@@ -1,0 +1,30 @@
+# ─── Harness self-tests ───────────────────────────────────────────────────────
+# HARNESS-OWNED — synced authoritatively by `agenticd init` (Tier-1 managed mirror).
+# Edit the bundle template at crates/agenticd-claude/assets/tasks/harness/hooks.toml,
+# then run `agenticd init`. A hand-edit here is reset on the next init.
+#
+# These exercise the harness's OWN enforcement surface (the Claude Code hooks +
+# status line), not the repo's stack — so they live with the harness, not in repo/.
+#
+# Prefix-less task syntax (`["test:hooks"]`) is mandatory in an included task file.
+
+# Claude Code hook policy tests (spec 0031). Pure-Python stdlib unittest, sub-second —
+# so it rides in `check`. Drives the default-deny engine and the pre_tool_use.py hook
+# end-to-end (allow vs block per the allowlist). Every suite runs under a bare `python3`
+# (no `uv run`): the only third-party matcher the hook needs (`pathspec`, for the
+# generated-files guard) is now VENDORED under `.claude/hooks/_vendor/` rather than a
+# uv-resolved dependency (spec-hook-dedep-pathspec), so nothing here resolves a
+# dependency environment.
+["test:hooks"]
+description = "Test the default-deny PreToolUse command policy + the hand-off harness Stop guard + the EnterWorktree dep-bootstrap hook + the PostToolUse auto-formatter + the bundle status line"
+run = [
+  "python3 .claude/hooks/tests/test_command_policy.py",
+  "python3 .claude/hooks/tests/test_handoff_policy.py",
+  "python3 .claude/hooks/tests/test_worktree_bootstrap.py",
+  "python3 .claude/hooks/tests/test_migration_guard.py",
+  "python3 .claude/hooks/tests/test_edit_during_commit.py",
+  "python3 .claude/hooks/tests/test_post_tool_use_format.py",
+  "python3 .claude/hooks/tests/test_generated_files.py",
+  "python3 .claude/hooks/tests/test_vendored_pathspec.py",
+  "python3 .claude/status_lines/tests/test_status_line.py",
+]

@@ -1,0 +1,133 @@
+# ─── Agent-facing gate entrypoints ────────────────────────────────────────────
+# HARNESS-OWNED — synced authoritatively by `agenticd init` (Tier-1 managed mirror).
+# Edit the bundle template at crates/agenticd-claude/assets/tasks/harness/gates.toml,
+# then run `agenticd init`. A hand-edit here is reset on the next init.
+#
+# These are the gate *entrypoints* and their governor/telemetry *wrapper machinery* —
+# the harness's contract. The bodies delegate to the repo-owned `check:*` / `test:*`
+# stack commands (in .config/tasks/repo/), so the gate ORCHESTRATION is the harness's
+# while the stack-specific leaf work stays with the repo.
+#
+# Prefix-less task syntax (`["pre-commit"]`) is mandatory in an included task file.
+
+# Pre-commit gate: fast checks + unit tests (slower integration/e2e live in pre-push / CI).
+#
+# Path-aware (spec-gate-path-filter) + within-lane scoping
+# (spec-gate-changed-test-and-crate-scoping): scripts/gates/precommit.py reads the staged set
+# and gates only what the change can break, at two granularities:
+#   • LANE — the always-set (prettier --check, typos, gitleaks --staged) every commit;
+#     the Rust gates only on a staged *.rs/Cargo.* path; the frontend gates only on a
+#     staged apps/web/**/package.json/lockfile path. A docs-only commit (the dominant
+#     loop shape) skips both languages.
+#   • WITHIN A LANE — clippy/nextest over the AFFECTED CRATES (the crates owning the
+#     staged files ∪ their reverse-dependency closure) not the whole --workspace;
+#     `vitest related`/scoped ESLint over only the changed files, not the full suite;
+#     `tsc` stays whole-program (a typecheck can't be soundly scoped).
+# This per-commit gate is a fast SMOKE; the unscoped whole-workspace / full-suite
+# coverage still runs at `mise run pre-stop` (end-of-loop) and pre-push — that layering is
+# why aggressive per-commit scoping is safe. Conservative fallbacks widen to full on a
+# workspace-global Rust file, unreadable `cargo metadata`, an unmapped path, or any
+# frontend manifest/config/test-infra change. deps:ensure (it provisions the
+# node_modules even prettier needs) + the cheap doc-name/git-subprocess guards stay as
+# `depends`; the single `mise run pre-commit` entry point is preserved, so the spec-0044
+# gate-telemetry envelope still emits one start/finish per commit.
+["pre-commit"]
+description = "Fast gates, path-aware + within-lane scoped (only the crates/files a commit touches; spec-gate-path-filter + spec-gate-changed-test-and-crate-scoping)"
+depends = ["deps:ensure", "check:git-subprocess", "check:doc-names", "check:schema-names"]
+# Two-step run: the stale-base advisory FIRST (non-fatal), then the checks. The
+# advisory (`wt warn-behind`, the stale-base preflight a retired fast-check task used to
+# run) prints before the check output scrolls — a base trailing main otherwise fails the
+# checks in code the diff never touched, and naming it up front turns that into "rebase
+# first". It always exits 0, so it never blocks a commit. The checks themselves are
+# wrapped in the cross-run gate governor (spec-gate-concurrency-governor): they acquire
+# one of AGENTIC_GATE_SLOTS machine-wide slots so concurrent worktree commits queue
+# instead of stacking. Reentrant — a governed parent (pre-stop) passes its slot through.
+run = [
+  "uv run --project tools/wt-cli wt warn-behind",
+  "python3 scripts/gates/gate_governor.py run -- python3 scripts/gates/precommit.py",
+]
+
+# ── Hand-off gate: `pre-stop` (runs automatically via the Stop hook) ──────────
+# `pre-stop` is the agent's HEAVY hand-off gate — one of the ONLY TWO gate names an
+# agent ever uses (`pre-commit` per commit, `pre-stop` at hand-off). The Claude Code
+# `Stop` hook runs it automatically before releasing the hand-off
+# (stop_handoff_guard.py → handoff_policy → `mise run pre-stop`); agents can also run
+# it manually to validate before stopping. There is NO PreStop hook event —
+# `pre-stop` is the *task*; the *invocation* is the `Stop` hook
+# ([[decision-handoff-gate-pre-stop-rename]]).
+#
+# Body: `change-report` first (the diff-report side effect, kept as a `depends`), then
+# the changed-files-e2e pipeline (`pre-stop:pipeline` — all `check` gates, then
+# `test:e2e:changed`), stamped `gate_type: pre-stop` so `handoff_policy.green_pre_stop_shas`
+# matches a green hand-off run. Wrapped outside-in: result-cache → governor → telemetry
+# → pipeline, so a repeated Stop on an unchanged tree replays the stored green in ~0 s
+# instead of re-running e2e (spec-gate-result-cache) — what makes "the heavy gate on
+# every Stop" affordable.
+["pre-stop"]
+description = "Agent hand-off gate (heavy): change-report + all check gates + changed-spec e2e. Run automatically by the Stop hook; run manually to validate before hand-off. Emits a sha-keyed `pre-stop` gate stamp on green (spec-handoff-harness-enforcement)."
+depends = ["change-report"]
+run = "python3 scripts/gates/gate_cache.py pre-stop --restamp -- python3 scripts/gates/gate_governor.py run -- python3 scripts/gates/gate_run.py pre-stop -- mise run pre-stop:pipeline"
+
+# Gate-telemetry wrapper (spec 0044). Runs the fast pre-commit gate but wraps it
+# with `source: gate` start/finish telemetry so the daemon can show a worktree as
+# `running-ci` while the gate is in flight and learn its rolling duration. Emission
+# is best-effort — the wrapper propagates the gate's exit code verbatim and never
+# fails the commit on a telemetry hiccup (see scripts/gates/gate_run.py). This is what
+# lefthook's pre-commit invokes; `mise run pre-commit` itself stays emission-free
+# so direct runs and CI don't double-count.
+["gate:run"]
+description = "Run the pre-commit gate, emitting spec-0044 gate telemetry around it (best-effort; gate outcome unchanged)"
+run = "python3 scripts/gates/gate_run.py pre-commit -- mise run pre-commit"
+
+# Rolling per-step gate-duration report (spec-gate-per-step-timing-telemetry).
+# Reads the structured `gate` finish events the wrapper emits and prints p50/p95/n
+# per step label across recent runs, slowest first — so the next gate optimization
+# is data-driven instead of manual log-reading. Read-only, stdlib Python.
+["gate:stats"]
+description = "Report rolling per-step gate durations (p50/p95/n) from telemetry (spec-gate-per-step-timing-telemetry)"
+run = "python3 scripts/gates/gate_stats.py"
+
+# Cross-run gate-governor status (spec-gate-concurrency-governor): how many of the N
+# machine-wide gate slots are in use right now, and which worktree holds each. Slot
+# state is read from the live flock (a dead holder's slot reads free), so it never
+# goes stale. Read-only.
+["gate:slots"]
+description = "Show gate-governor slot occupancy (active concurrent gate runs across worktrees; spec-gate-concurrency-governor)"
+run = "python3 scripts/gates/gate_governor.py status"
+
+# Internal pipeline body invoked by `pre-stop` through the gate-telemetry wrapper —
+# NOT a direct agent surface (deliberately off the allowlist; agents run `mise run
+# pre-stop`). Runs through scripts/gates/ci_pipeline.py so the loop's two phases (all `check`
+# gates, then changed-spec e2e) are TIMED as steps for the gate-telemetry wrapper
+# (spec-gate-per-step-timing-telemetry). `check` is one `mise run check` (its internal
+# parallelism preserved); the script runs check then e2e ALONE — e2e drives a real
+# daemon + headless browser whose scan/SSE timing is latency-sensitive and starves if
+# it contends with the parallel cargo builds in `check` (spec 0052). The human full-e2e
+# gate is `ci-full` (below); there is no remote CI/CD.
+["pre-stop:pipeline"]
+description = "Internal: the hand-off pipeline body (check gates + changed-spec e2e), per-step timed. Invoked by `mise run pre-stop` via the gate-telemetry wrapper; not run directly."
+run = "python3 scripts/gates/ci_pipeline.py test:e2e:changed"
+
+# Human gate: all check gates, then the ENTIRE e2e suite. Routed through the
+# gate-telemetry wrapper + ci_pipeline.py so the FULL-suite step costs (the
+# whole-program vitest/build/clippy the fast commit gate scopes away) are captured
+# too (spec-gate-per-step-timing-telemetry); emission stays best-effort on the
+# outcome. Backs pre-push; not for agents (spec changed-files-e2e-heuristic).
+# `depends = ["check:backend:slow"]` (spec-integration-test-time-budget): the human
+# gate additionally runs the slow-tagged backend tests (the integration-slow profile),
+# which the agent `pre-stop`/`check` path skips. It runs BEFORE the check+e2e pipeline below,
+# so the whole slow set is exercised on every push without slowing the agent loop.
+["ci-full"]
+description = "Human gate: slow backend tests + all check gates, then the ENTIRE e2e suite, per-step timed. Backs pre-push; not for agents (spec changed-files-e2e-heuristic)."
+depends = ["check:backend:slow"]
+# Governed too (spec-gate-concurrency-governor) so a human pre-push queues behind
+# active agent gates rather than piling on. NOTE: the `check:backend:slow` depends
+# above runs BEFORE this governed run — a deliberately accepted small ungoverned
+# prefix (folding depends into the slot would need a task restructure).
+run = "python3 scripts/gates/gate_governor.py run -- python3 scripts/gates/gate_run.py ci-full -- python3 scripts/gates/ci_pipeline.py test:e2e"
+
+# Pre-push: the full pipeline (= `ci-full`, so a push always runs the whole e2e
+# suite). Pushing is a human op; agents hand off without pushing.
+["pre-push"]
+description = "Full local gates before pushing (the `ci-full` pipeline — entire e2e suite)"
+depends = ["ci-full"]

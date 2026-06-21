@@ -1,0 +1,46 @@
+# ─── Tests + change report (repo-owned STUBS) ─────────────────────────────────
+# REPO-OWNED — seeded once by `agenticd init`, never overwritten afterward.
+# Replace each no-op body with your stack's real test command; the NAMES are the
+# harness contract.
+#
+# Prefix-less task syntax (`["test:unit"]`) is mandatory in an included task file.
+
+[test]
+description = "Full test suite"
+run = 'echo "test: not yet configured"'
+
+["test:unit"]
+description = "Unit tests only"
+run = 'echo "test:unit: not yet configured"'
+
+["test:integration"]
+description = "Integration tests"
+run = 'echo "test:integration: not yet configured"'
+
+["test:e2e"]
+description = "Full end-to-end suite (human-only)"
+run = 'echo "test:e2e: not yet configured"'
+
+["test:e2e:changed"]
+description = "E2e tests for specs changed by this worktree (the agent gate)"
+run = 'echo "test:e2e:changed: not yet configured"'
+
+["test:e2e:changed:dirty"]
+description = "E2e tests for changed specs including uncommitted"
+run = 'echo "test:e2e:changed:dirty: not yet configured"'
+
+["test:e2e:install"]
+description = "Install e2e browser dependencies"
+run = 'echo "test:e2e:install: not yet configured"'
+
+["test:stress"]
+description = "Stress tests"
+run = 'echo "test:stress: not yet configured"; exit 0'
+
+["test:scripts"]
+description = "Test the scripts/ helpers"
+run = 'echo "test:scripts: not yet configured"'
+
+[change-report]
+description = "Generate a change report for the current worktree diff vs main"
+run = 'echo "change-report: no-op — add your diff/report generation command here"'

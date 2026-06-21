@@ -1,0 +1,39 @@
+# ─── Codegen + deps + bootstrap (repo-owned STUBS) ────────────────────────────
+# REPO-OWNED — seeded once by `agenticd init`, never overwritten afterward.
+# Replace each no-op body with your stack's real command. `setup` / `wt:setup` /
+# `deps:*` are repo-owned because their bodies are stack-specific dep installs; the
+# harness owns only their names (e.g. wt:new calls `mise run setup` by name).
+#
+# Prefix-less task syntax (`["gen:openapi"]`) is mandatory in an included task file.
+
+[setup]
+description = "Bootstrap a fresh checkout (install tools + deps)"
+run = "mise install"
+
+["wt:setup"]
+description = "Bootstrap a fresh worktree: install deps, format whole tree. Called automatically by wt:new — replace body with your stack's setup commands"
+run = 'echo "wt:setup: no-op — add your dep-install / format commands here"'
+
+["gen:openapi"]
+description = "Regenerate the API contract artifacts (commit the diff)"
+run = 'echo "gen:openapi: not yet configured"'
+
+["db:generate-entities"]
+description = "Regenerate DB entities from migrations (commit the diff)"
+run = 'echo "db:generate-entities: not yet configured"'
+
+["docs:sync"]
+description = "Pull and cache vendor documentation"
+run = 'echo "docs:sync: not yet configured"; exit 0'
+
+["deps:ensure"]
+description = "Ensure all dependencies are installed"
+run = 'echo "deps:ensure: not yet configured"'
+
+["deps:validate"]
+description = "Validate the dependency-automation config"
+run = 'echo "deps:validate: not yet configured"'
+
+["deps:scan"]
+description = "Local read-only report of available dependency updates"
+run = 'echo "deps:scan: not yet configured"'

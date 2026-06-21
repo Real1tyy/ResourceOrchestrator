@@ -1,0 +1,79 @@
+# ─── Commit hygiene + harness admin ───────────────────────────────────────────
+# HARNESS-OWNED — synced authoritatively by `agenticd init` (Tier-1 managed mirror).
+# Edit the bundle template at crates/agenticd-claude/assets/tasks/harness/commit.toml,
+# then run `agenticd init`. A hand-edit here is reset on the next init.
+#
+# Git hooks (lefthook), Conventional Commits (cog), changelog (git-cliff).
+# See docs/TOOLS.md §6 and ADRs 0009 / 0010 / 0011.
+#
+# Prefix-less task syntax (`["install-hooks"]`) is mandatory in an included task file.
+
+["install-hooks"]
+description = "Install git hooks via lefthook"
+# --force installs into the current hooks path even when core.hooksPath is set
+# locally (this repo points it at the default .git/hooks). Safe + idempotent.
+run = "lefthook install --force"
+
+["commit-check"]
+description = "Verify all commit messages follow Conventional Commits"
+# Full history while the repo is pre-release (no tags). Once the first tag
+# lands, scope to the release range with `cog check --from-latest-tag`.
+run = "cog check --ignore-merge-commits"
+
+[changelog]
+description = "Regenerate CHANGELOG.md from commit history"
+run = "git cliff -o CHANGELOG.md"
+
+[release]
+description = "Cut a release: bump version + regenerate CHANGELOG.md + tag (best-effort)"
+run = [
+  "cog bump --auto",
+  "git cliff -o CHANGELOG.md",
+  "git add CHANGELOG.md",
+  "git commit --amend --no-edit",
+]
+
+# Spec backlog viewer & planner (scripts/specs.py). Reads docs/specs/ lifecycle
+# status + WSJF estimates + depends_on, and prints what's ready / blocked / next.
+# Trailing args pass through to the script: `mise run specs --all`, `mise run specs --history`.
+[specs]
+description = "Spec backlog viewer & planner — ready/blocked/next, ranked by WSJF"
+run = "python3 scripts/specs.py"
+
+# Doc-node authoring + query CLI (scripts/docs.py). The SANCTIONED path for CREATING a
+# node under docs/{specs,decisions,memory,knowledge}/: `new` builds a contract-correct
+# file (frontmatter defaulted from the type's template, overridden by the JSON object)
+# and picks a YYYY-MM-DD-HHMMSS prefix unique across the root checkout AND every sibling
+# worktree, so parallel agents never collide on a number (the rebase model,
+# [[decision-collision-free-doc-ordering]]). Editing an existing node stays a direct edit.
+# list/show/search are thin read-only conveniences. Trailing args pass through:
+#   mise run docs:new spec --json '{"name":"…","tags":["x"],"body":"…"}'
+#   mise run docs:new knowledge --json '{"name":"SQLite FTS5","source_url":"…"}'
+#   mise run docs:list spec --status proposed
+["docs:new"]
+description = "Create a docs/{specs,decisions,memory,knowledge} node from a JSON object (unique prefix, template-defaulted frontmatter)"
+run = "python3 scripts/docs.py new"
+
+["docs:list"]
+description = "List doc nodes of a type (id/status/title); --status filters"
+run = "python3 scripts/docs.py list"
+
+["docs:show"]
+description = "Print a doc node by its canonical id"
+run = "python3 scripts/docs.py show"
+
+["docs:search"]
+description = "Case-insensitive substring search over doc title/tags/body"
+run = "python3 scripts/docs.py search"
+
+# HUMAN ONLY: run any command on the main checkout with both escape hatches armed.
+# Chainable — mise appends the trailing args to the `env` prefix, so the whole
+# command line runs with AGENTIC_ALLOW_MAIN_{COMMIT,EDIT}=1 in its environment:
+#   mise run admin git commit -m "feat: …"   → commit on main is allowed
+#   mise run admin claude                     → a Claude session that may edit/commit main
+# The inline `env VAR=1` overrides the default-"0" from [env] for the child only;
+# nothing is persisted, so the guards re-arm the moment the command exits. Off the
+# agent allowlist on purpose — this IS the human escape hatch, not an agent path.
+[admin]
+description = "HUMAN ONLY: run a command on main with AGENTIC_ALLOW_MAIN_COMMIT=1 + AGENTIC_ALLOW_MAIN_EDIT=1 (one-shot, child-process only). Chainable: mise run admin <cmd> … e.g. `mise run admin git commit -m \"feat: x\"` or `mise run admin claude`."
+run = "env AGENTIC_ALLOW_MAIN_COMMIT=1 AGENTIC_ALLOW_MAIN_EDIT=1"

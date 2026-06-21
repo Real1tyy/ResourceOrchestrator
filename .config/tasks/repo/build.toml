@@ -1,0 +1,30 @@
+# ─── Build + lint + format + typecheck (repo-owned STUBS) ─────────────────────
+# REPO-OWNED — seeded once by `agenticd init`, never overwritten afterward.
+# Replace each no-op body with your stack's real command; the NAMES are the
+# harness contract.
+#
+# Prefix-less task syntax (`["format:check"]`) is mandatory in an included task file.
+
+[lint]
+description = "Linter"
+run = 'echo "lint: not yet configured"'
+
+[format]
+description = "Auto-format the codebase"
+run = 'echo "format: not yet configured"'
+
+["format:check"]
+description = "Check formatting without writing"
+run = 'echo "format:check: not yet configured"'
+
+[typecheck]
+description = "Type-check the codebase"
+run = 'echo "typecheck: not yet configured"'
+
+[build]
+description = "Build the project"
+run = 'echo "build: not yet configured"'
+
+["build:e2e"]
+description = "Debug build for the agent e2e gate"
+run = 'echo "build:e2e: not yet configured"'

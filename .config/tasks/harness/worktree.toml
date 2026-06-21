@@ -1,0 +1,121 @@
+# ─── Worktree lifecycle (spec 0031) ───────────────────────────────────────────
+# HARNESS-OWNED — synced authoritatively by `agenticd init` (Tier-1 managed mirror,
+# [[decision-docs-bundle-source-of-truth]]). Edit the bundle template at
+# crates/agenticd-claude/assets/tasks/harness/worktree.toml, then run `agenticd init`.
+# A hand-edit here is reset on the next init.
+#
+# The allow-listed surface for agents. The worktree lifecycle is the `wt:*` set
+# (new/rebase/verify/list/unlock + the human-only land); a few non-worktree
+# harness utilities live here too under honest namespaces (gate:fix, dep:add,
+# perf:measure, cargo:rebuild-crate) plus the commit-gate guards (guard:*). The
+# default-deny PreToolUse hook (.claude/hooks/pre_tool_use.py, allowlist at
+# .claude/hooks/policy/allowlist.toml) blocks any Bash command that is not an
+# allow-listed task or a read-only inspection command. Agents act ONLY through
+# these — they never type raw `git worktree add` / `git rebase`, nor `wt`/`uv run`
+# directly. The git sequences live in the encapsulated `wt` CLI (tools/wt-cli,
+# shipped by the bundle and run via `uv`) so internals can change without touching
+# prompts. See docs/TOOLS.md §12 and docs/knowledge/agentic-workflow-lifecycle.md.
+#
+# Mise appends CLI args to the run command, so `mise run wt:new <slug>` invokes
+# `uv run --project tools/wt-cli wt new <slug>`. `uv run` resolves the tool's
+# pinned deps (typer) from tools/wt-cli/uv.lock and caches the venv after first use.
+#
+# Tasks live here prefix-less (`["wt:new"]`, not `[tasks."wt:new"]`) because mise
+# requires that form in an included task file (task_config.includes).
+
+["wt:new"]
+description = "Create an isolated worktree off HEAD under .claude/worktrees/<slug> (branch worktree-<slug>), then bootstrap it (mise run setup). Usage: mise run wt:new <slug>"
+run = "uv run --project tools/wt-cli wt new"
+
+["wt:rebase"]
+description = "Rebase a worktree branch onto main; guides conflict resolution. Run inside a worktree to act on it, or from main with a slug — omit the slug for an interactive picker. Usage: mise run wt:rebase [slug]"
+run = "uv run --project tools/wt-cli wt rebase"
+
+["wt:verify"]
+description = "Self-review inputs: diff vs merge-base. Run inside a worktree to act on it, or from main with a slug — omit the slug for an interactive picker. Usage: mise run wt:verify [slug]"
+run = "uv run --project tools/wt-cli wt verify"
+
+# Recover from an interrupted git op that left a stale index.lock behind (spec
+# 0048). Allow-listable WITHOUT granting an arbitrary-delete capability because
+# the verb takes NO path argument — `wt` computes the lock via `git rev-parse
+# --git-path index.lock`, so it can only ever touch the current worktree's lock.
+# An age guard refuses a fresh lock (a possibly-active op).
+["wt:unlock"]
+description = "Remove a STALE git index.lock in the CURRENT worktree (recover from an interrupted git op). Self-computed path, no argument, age-guarded — it can delete nothing else. Usage: mise run wt:unlock"
+run = "uv run --project tools/wt-cli wt unlock"
+
+# Escape hatch for a stale cargo fingerprint within a worktree
+# ([[decision-per-worktree-cargo-target-isolation]]). When `cargo check` reports a
+# symbol/field that grep cannot find AND the owning crate is absent from cargo's
+# "Checking" list (e.g. a build-script fingerprint that did not re-evaluate), this task
+# touches every .rs source in the named crate, forcing cargo to re-fingerprint from the
+# current source. The only allowlisted buster (raw `cargo clean` is denied to agents).
+["cargo:rebuild-crate"]
+description = "Touch a workspace crate's .rs sources to bust a stale cargo fingerprint (recovery for a phantom symbol-not-found). Usage: mise run cargo:rebuild-crate <crate-name>"
+run = "python3 scripts/wt/rebuild_crate.py"
+
+["wt:list"]
+description = "List landable worktrees (slug, branch, ahead/behind vs main). Usage: mise run wt:list"
+run = "uv run --project tools/wt-cli wt list"
+
+# One-shot fixer for the two gate failures an agent can't fix with raw tools:
+# formatting drift (the gate only `--check`s; `cargo fmt` is off the allowlist) and
+# OpenAPI/Orval contract drift. Regenerate the contract first, then format in place.
+# (Generated artifacts are prettier-ignored, so order can't fight check:contract.)
+["gate:fix"]
+description = "One-shot gate-fail fixer: regenerate the API contract + auto-format in place (gen:openapi + format). Run after a format or OpenAPI-drift gate failure. Usage: mise run gate:fix"
+depends = ["deps:ensure"]
+run = [
+  "mise run gen:openapi",
+  "mise run format",
+]
+
+# Add a frontend dependency the sanctioned way. Bare `pnpm`/`npm` is default-denied
+# (spec 0031), but pnpm invoked INSIDE a mise task is a child process the PreToolUse
+# hook never inspects — so this task is the allow-listed path to `pnpm add` for
+# agents. --save-exact honours the no-caret pin convention (there is no .npmrc
+# enforcing it); a single `pnpm add -E` resolves the version, pins package.json, AND
+# writes the lockfile's exact `specifier:` in one shot — no manual edit-then-resolve
+# dance. Targets apps/web (the common case); rare root-workspace deps still go
+# through hand-editing the root package.json + `mise run setup`. mise appends the
+# trailing args, so `mise run dep:add -D vitest` → `pnpm --filter web add -E -D vitest`.
+["dep:add"]
+description = "Add an exact-pinned npm dep to apps/web (allow-listed wrapper for `pnpm --filter web add -E`; bare pnpm is denied under spec 0031). Pass -D for a devDependency. Usage: mise run dep:add [-D] <pkg>[@version] …"
+run = "pnpm --filter web add --save-exact"
+
+# Perf-spec measurement toolkit — provides the git-call counting shim +
+# /proc thread sampling in one allow-listed invocation. Spares the next
+# perf-spec author from hand-assembling the shim, chmod, PATH override, and
+# /proc read that are blocked individually under default-deny (spec 0031).
+# mise appends trailing args, so `mise run perf:measure -- cargo run --example foo`
+# passes `-- cargo run --example foo` to measure.py, which strips the separator.
+["perf:measure"]
+description = "Perf-spec measurement toolkit: git-call counting shim + /proc thread sampling. Usage: mise run perf:measure [--pid <pid>] -- <cmd> [args...]"
+run = "python3 scripts/gates/measure.py"
+
+["wt:land"]
+description = "HUMAN ONLY (Stage 8): fast-forward main to the branch + tear down. Auto-rebases the branch onto main when it has diverged, then retries the ff. Off the agent allowlist. Usage: mise run wt:land [slug] — omit the slug for an interactive, searchable picker."
+run = "uv run --project tools/wt-cli wt land"
+
+# ── Commit guards (called by the lefthook pre-commit hook) ────────────────────
+# Not worktree-lifecycle ops — they are commit-gate guards, hence the `guard:` namespace.
+
+["guard:commit"]
+description = "Guard: fail when a commit is attempted from the main checkout (no commits on main). Used by the lefthook pre-commit hook; escape with AGENTIC_ALLOW_MAIN_COMMIT=1"
+run = "python3 scripts/guards/guard_commit_location.py"
+
+["guard:doc-names"]
+description = "Block legacy/colliding doc filenames"
+run = "python3 scripts/guards/guard_doc_names.py"
+
+["guard:route-tree"]
+description = "Guard: fail when a commit adds a route under apps/web/src/routes/ without regenerating routeTree.gen.ts. Used by the lefthook pre-commit hook; escape with AGENTIC_ALLOW_ROUTE_TREE_DRIFT=1"
+run = "python3 scripts/guards/guard_route_tree.py"
+
+["guard:stale-staged"]
+description = "Guard (WARN, never blocks): a staged file's blob differs from the working tree, so the gate checks the stale index. Used by the lefthook pre-commit hook; escape with AGENTIC_ALLOW_STALE_STAGED=1"
+run = "python3 scripts/guards/guard_stale_staged.py"
+
+["guard:paths"]
+description = "Guard: a worktree commit must stay inside its boundary — staged paths contained in the worktree (no cross-worktree/symlink escape) and main clean of changes that would break the Stage-8 ff-merge. Used by the lefthook pre-commit hook; escapes: AGENTIC_ALLOW_FOREIGN_STAGED=1 / AGENTIC_ALLOW_DIRTY_MAIN=1"
+run = "python3 scripts/guards/guard_worktree_paths.py"

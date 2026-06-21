@@ -1,0 +1,79 @@
+# ─── Quality-gate checks (repo-owned STUBS) ───────────────────────────────────
+# REPO-OWNED — `agenticd init` SEEDS this file once on a fresh repo and never
+# overwrites it afterward (Tier-2 seed-once). Replace each no-op body below with
+# your stack's real check command; the task NAMES are the harness contract (the
+# harness gate entrypoints in tasks/harness/gates.toml delegate to these by name).
+#
+# Prefix-less task syntax (`["check:frontend"]`) is mandatory in an included task file.
+
+[check]
+description = "All static checks (lint, typecheck, format, spelling) — replace with your real gate"
+run = 'echo "check: not yet configured"'
+
+["check:gates"]
+description = "The check aggregate that `check` result-caches (spec-gate-result-cache) — replace with your real gate"
+run = 'echo "check:gates: not yet configured"'
+
+["check:frontend"]
+description = "Frontend checks (format + lint + typecheck + build + unit tests)"
+run = 'echo "check:frontend: not yet configured"'
+
+["check:dead-code:frontend"]
+description = "Detect unused exports/files/dependencies in the frontend"
+run = 'echo "check:dead-code:frontend: not yet configured"'
+
+["check:backend:compile"]
+description = "Backend compile + lint (no tests)"
+run = 'echo "check:backend:compile: not yet configured"'
+
+["check:backend"]
+description = "Backend gate: compile + tests"
+run = 'echo "check:backend: not yet configured"'
+
+["check:backend:slow"]
+description = "Backend slow-test gate (human-only, rides in ci-full)"
+run = 'echo "check:backend:slow: not yet configured"'
+
+["check:git-subprocess"]
+description = "Guard: forbid raw git subprocesses outside the sanctioned builder"
+run = 'echo "check:git-subprocess: not yet configured"; exit 0'
+
+["check:doc-names"]
+description = "Enforce collision-free doc filenames + unique ids"
+run = 'echo "check:doc-names: not yet configured"; exit 0'
+
+["check:schema-names"]
+description = "Guard: forbid duplicate generated schema names"
+run = 'echo "check:schema-names: not yet configured"; exit 0'
+
+["check:contract"]
+description = "API contract drift check (generated client vs spec)"
+run = 'echo "check:contract: not yet configured"'
+
+["check:entities"]
+description = "DB entity drift check (regenerate from migrations, fail on diff)"
+run = 'echo "check:entities: not yet configured"'
+
+["check:spelling"]
+description = "Spell-check the repo"
+run = 'echo "check:spelling: not yet configured"'
+
+["check:security"]
+description = "Dependency policy and vulnerability scans"
+run = 'echo "check:security: not yet configured"'
+
+["check:secrets"]
+description = "Scan the working tree for committed secrets"
+run = 'echo "check:secrets: not yet configured"'
+
+["check:secrets:history"]
+description = "Scan the full git history for secrets (slow)"
+run = 'echo "check:secrets:history: not yet configured"'
+
+["check:sast"]
+description = "Static Application Security Testing scan"
+run = 'echo "check:sast: not yet configured"'
+
+["check:sast:ci"]
+description = "SAST scan with SARIF output (CI mirror)"
+run = 'echo "check:sast:ci: not yet configured"'

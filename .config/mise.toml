@@ -1,0 +1,47 @@
+# .config/mise.toml — task harness orchestrator seeded by `agenticd init`.
+#
+# This file is an ORCHESTRATOR ONLY: tool versions, env, and the
+# `task_config.includes` table of contents — no task bodies. Every task lives in a
+# concern-grouped include file under .config/tasks/, split into two trees by
+# ownership (spec-mise-task-file-restructuring):
+#
+#   • tasks/harness/* — HARNESS-OWNED. Synced authoritatively by `agenticd init`
+#     (Tier-1 managed mirror). Do NOT hand-edit; a local change is reset on the
+#     next init. To change one, edit the bundle template under
+#     crates/agenticd-claude/assets/tasks/harness/* and re-run init.
+#   • tasks/repo/* — REPO-OWNED. `agenticd init` seeds these once (the no-op stubs
+#     below) and never overwrites them afterward. Replace each stub `run` body with
+#     your stack's real command; the task NAMES are the stable harness contract.
+#
+# Include paths resolve relative to the PROJECT ROOT (mise's config_root, the parent
+# of .config/), NOT to .config/ — so each entry is `.config/tasks/...`. `includes`
+# REPLACES mise's default file-task search, so every file must be listed explicitly.
+#
+# Install mise: https://mise.jdx.dev/getting-started.html
+# Run a task:   mise run <task>   (or: mise <task>)
+
+[tools]
+# Declare the tools this repo needs. mise installs them automatically.
+# Examples:
+#   node = "22"
+#   python = "3.12"
+#   rust = "stable"
+#   lefthook = "latest"
+#   cog = "latest"
+
+[task_config]
+# `includes` REPLACES mise's default file-task search — every task file MUST be
+# listed here or its tasks silently vanish. Paths are project-root-relative.
+includes = [
+  # HARNESS-OWNED (init-synced; do not hand-edit — edit the bundle + run init):
+  ".config/tasks/harness/worktree.toml",
+  ".config/tasks/harness/gates.toml",
+  ".config/tasks/harness/commit.toml",
+  ".config/tasks/harness/hooks.toml",
+  # REPO-OWNED (seeded once; replace the stub bodies with your stack's commands):
+  ".config/tasks/repo/checks.toml",
+  ".config/tasks/repo/tests.toml",
+  ".config/tasks/repo/build.toml",
+  ".config/tasks/repo/dev.toml",
+  ".config/tasks/repo/codegen.toml",
+]

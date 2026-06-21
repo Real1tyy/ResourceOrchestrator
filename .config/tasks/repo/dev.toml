@@ -1,0 +1,62 @@
+# ─── Dev + serve + daemon (repo-owned STUBS) ──────────────────────────────────
+# REPO-OWNED — seeded once by `agenticd init`, never overwritten afterward.
+# Replace each no-op body with your stack's real command. These dev/serve/daemon
+# tasks are stack-specific; a downstream repo keeps only the ones it needs.
+#
+# Prefix-less task syntax (`["dev:web"]`) is mandatory in an included task file.
+
+[dev]
+description = "Run dev servers in parallel"
+run = 'echo "dev: not yet configured"'
+
+["dev:backend"]
+description = "Run the backend in dev mode"
+run = 'echo "dev:backend: not yet configured"'
+
+["dev:web"]
+description = "Run the frontend dev server"
+run = 'echo "dev:web: not yet configured"'
+
+[serve]
+description = "Run backend + frontend (release) in parallel"
+run = 'echo "serve: not yet configured"'
+
+["serve:backend"]
+description = "Run the backend (release build)"
+run = 'echo "serve:backend: not yet configured"'
+
+["serve:frontend"]
+description = "Run the frontend dev server with HMR"
+run = 'echo "serve:frontend: not yet configured"'
+
+["serve:debug"]
+description = "Run backend (hot-reload) + frontend in parallel"
+run = 'echo "serve:debug: not yet configured"'
+
+["serve:debug:backend"]
+description = "Run the backend with hot reload (debug build)"
+run = 'echo "serve:debug:backend: not yet configured"'
+
+["daemon:install"]
+description = "Install the long-running service"
+run = 'echo "daemon:install: not yet configured"'
+
+["daemon:restart"]
+description = "Rebuild + restart the running service"
+run = 'echo "daemon:restart: not yet configured"'
+
+["daemon:deploy"]
+description = "Rebuild UI + binary, then restart the service"
+run = 'echo "daemon:deploy: not yet configured"'
+
+["daemon:uninstall"]
+description = "Stop, disable, and remove the service"
+run = 'echo "daemon:uninstall: not yet configured"'
+
+["daemon:status"]
+description = "Show the service status"
+run = 'echo "daemon:status: not yet configured"'
+
+["daemon:logs"]
+description = "Follow the service logs"
+run = 'echo "daemon:logs: not yet configured"'
