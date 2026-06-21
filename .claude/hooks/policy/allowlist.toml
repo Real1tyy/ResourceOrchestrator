@@ -1,0 +1,297 @@
+# allowlist.toml — default-deny capability policy for agent Bash.
+#
+# This file is installed by `agenticd init` into every indexed repo under
+# .claude/hooks/policy/allowlist.toml. It is repo-agnostic: the same file
+# governs a Rust backend, a Python CLI, a TypeScript app, or an empty scaffold.
+# Repos extend it by editing their local copy — this shipped version is the
+# safe baseline every repo starts from.
+#
+# DATA, NOT CODE. The PreToolUse hook (.claude/hooks/pre_tool_use.py via
+# .claude/hooks/validators/command_policy.py) reads this file and evaluates
+# every Bash tool-call against it. Whatever is not explicitly allowed is DENIED.
+# The hook also blocks Write/Edit/MultiEdit/NotebookEdit against the main
+# working tree (see [file_tools] below).
+#
+# Posture: principle of least privilege. The allowed surface is intentionally
+# small and named — the `wt:*` Mise tasks that drive the worktree loop, a
+# read-only inspection set, and the sanctioned in-worktree git operations.
+# `schema_version` lets the loader reject a config it cannot interpret.
+#
+# `cd` is allowed (below) but a hop that lands in the repo OUTSIDE this worktree —
+# the main checkout or a sibling worktree — is blocked in code
+# (command_policy.worktree_escape_decision), for both `cd <main>` (sticky) and
+# `git -C <main>` (per-command). The Bash tool resets cwd to the worktree every
+# call, so such a hop silently aims at the wrong checkout — the single biggest
+# time-sink in a busy multi-worktree session. Truly-external paths (/tmp, ~) are
+# fine. Run commands bare or pass absolute worktree paths. Hatch: AGENTIC_ALLOW_CD_ESCAPE=1.
+schema_version = 1
+
+# Behavior when the engine cannot classify a command (errors, unparsable shell).
+# Fail-CLOSED for mutating commands (deny on uncertainty); fail-OPEN for
+# read-only (a hook bug degrades focus, never bricks inspection).
+[fail_mode]
+mutating = "deny"
+read_only = "allow"
+
+# File-tool policy (Write / Edit / MultiEdit / NotebookEdit).
+# Agents work in an isolated worktree under .claude/worktrees/<slug>/ — edits
+# to the main working tree bypass git isolation and are blocked. When true, a
+# write whose target is outside a worktree is BLOCKED.
+# Human override: launch with AGENTIC_ALLOW_MAIN_EDIT=1.
+[file_tools]
+block_main_tree_edits = true
+
+[allow]
+# Mise tasks an agent may invoke via `mise run <task>`.
+# `wt:land` is deliberately ABSENT — fast-forwarding main and tearing down the
+# worktree is the human's final step, not the agent's. Keep this list in sync
+# with `mise tasks` for your repo; an unknown task is denied with the allowed
+# set shown in the error message.
+mise_tasks = [
+  # MINIMAL UNIVERSAL BASELINE. An agent's whole world is two gates — `pre-commit`
+  # (every commit) and `pre-stop` (hand-off) — both run automatically by the harness;
+  # an agent may also run either by hand, plus the individual steps they decompose into,
+  # to iterate ONE failure. Everything stack-specific (granular `check:*`, codegen, e2e,
+  # release/docs tooling, …) is NOT here: the downstream repo EXTENDS this baseline via
+  # the init array-merge (this list is a floor, never a ceiling). Keep it minimal so a
+  # fresh repo's agents stay focused, not overwhelmed.
+  #
+  # the two gates + their generic, decomposable steps (run any part standalone):
+  "pre-commit", "pre-stop",
+  "format", "format:check", "lint", "test", "test:unit", "test:integration", "check",
+  # harness self-tests — every harnessed repo ships hooks + bundle scripts to test
+  # (test:wt-cli runs the shipped tool's pytest suite):
+  "test:hooks", "test:scripts", "test:wt-cli",
+  # doc-node authoring + query (scripts/docs.py): the sanctioned create path for a node
+  # under docs/{specs,decisions,memory,knowledge}/ + thin read-only queries.
+  "docs:new", "docs:list", "docs:show", "docs:search",
+  # worktree lifecycle — the sanctioned git/worktree surface (the wt CLI, run via mise):
+  "wt:new", "wt:rebase", "wt:verify", "wt:list", "wt:unlock",
+  # non-worktree harness utilities (honest namespaces): gate-fail fixer, dep-add wrapper,
+  # perf-spec measurement, shared-target cargo-fingerprint buster:
+  "gate:fix", "dep:add", "perf:measure", "cargo:rebuild-crate",
+  # one-time bootstrap / dependency sync:
+  "setup", "deps:ensure", "deps:validate", "deps:scan", "deps:sync",
+]
+
+# Mise meta-subcommands (not task runs) an agent may use: inspection + bootstrap.
+# `exec` and `use` are excluded — `mise exec <anything>` would be an escape hatch
+# around default-deny, and `mise use` mutates tool config.
+# Mise is routed by the program token's BASENAME (command_policy.py), so an
+# absolute-/relative-path invocation — `/home/you/.local/bin/mise run <task>`,
+# `./bin/mise run <task>` — is classified exactly like bare `mise run <task>`. That is
+# the agent's escape when bare `mise` resolves to the `mise activate` shell *function*
+# (undefined in the non-interactive agent Bash) and dies with `command not found`:
+# resolve the binary once with `command -v mise` and call it by path. The deny_rules
+# below run first over the raw string, so this is not a bypass.
+mise_subcommands = ["tasks", "task", "run", "trust", "install", "ls", "list", "current", "which", "version", "--version", "-v"]
+
+# The project's own binary (`agenticd`) — only the safe, named subcommands an agent
+# may run as part of the synchronize loop (spec-docs-source-of-truth-inversion):
+# `init` materializes/syncs the managed docs + harness; `doctor` is a read-only health
+# check. Matched by the binary's basename, so the build forms ride along
+# (`./target/debug/agenticd init`, `./target/release/agenticd init`). Mutating/fleet
+# subcommands (`upgrade`, `serve`, …) stay denied — the human's call. A bare `agenticd`
+# or `agenticd --version`/`--help` is read-only and allowed.
+agenticd_subcommands = ["init", "doctor"]
+
+# Non-git read-only programs. Matched as the program (first token) of a
+# sub-command. These never mutate the repo or reach the network, so their arguments
+# are not further constrained. Shell control-flow (for/while/if loops) is handled in
+# command_policy.py: a loop's body commands are classified against THIS list, so the
+# set below is also what an agent may run inside a loop.
+read_only_commands = [
+  # file/content inspection
+  "ls", "cat", "bat", "rg", "grep", "egrep", "fgrep", "find", "fd", "head",
+  "tail", "wc", "echo", "printf", "pwd", "cd", "tree", "jq", "yq", "stat",
+  "file", "which", "type", "command", "diff", "sort", "uniq", "cut", "awk",
+  "sed", "tr", "test", "true", "false", "basename", "dirname", "realpath",
+  "readlink", "env", "date", "whoami", "id", "uname", "column", "nl", "tee",
+  "less", "more", "xargs", "comm", "join", "paste", "seq",
+  "tac", "rev", "fold", "expand", "unexpand", "cmp", "diff3", "csplit",
+  # shell builtins commonly used inside loops/conditionals
+  "read", "[", "expr", ":", "let", "printenv", "sleep", "hash",
+  # checksums / encoding / binary inspection (read-only)
+  "md5sum", "sha1sum", "sha256sum", "sha512sum", "cksum", "b2sum",
+  "base64", "base32", "xxd", "od", "hexdump", "strings", "numfmt",
+  # system / environment inspection (read-only)
+  "hostname", "arch", "nproc", "getconf", "locale", "tty", "groups", "users",
+  "uptime", "df", "du", "free", "ps", "pgrep", "lscpu", "tput", "cal",
+  # process/perf profiling — diagnose the daemon's CPU from inside an agent loop
+  # (`top -H -b -n1`, `perf stat/record`); sampling only, never touches repo/git.
+  "top", "perf",
+  "whereis", "whatis", "apropos", "man",
+  # cgroup resource cap (spec-gate-cgroup-resource-cap): the gate self-wraps every heavy
+  # run in a systemd scope joined to agenticd-gate.slice and pins the slice's aggregate
+  # MemoryMax/CPUQuota. `systemd-run` launches the capped scope; `systemctl` (--user
+  # set-property) sets the slice limits. User-scoped only; they never touch repo/git state.
+  "systemd-run", "systemctl",
+]
+
+# git subcommands that are read-only — always allowed, anywhere. NOTE: `branch`,
+# `worktree`, and `clean` are deliberately absent — they are read-only or mutating
+# depending on flags (`git branch` lists but `git branch -D` force-deletes), so
+# command_policy.py inspects their flags rather than blanket-allowing the verb.
+git_read_only = [
+  "status", "log", "diff", "show", "rev-parse",
+  "blame", "shortlog", "describe", "config", "ls-files", "ls-tree", "ls-remote",
+  "remote", "reflog", "cat-file", "merge-base", "name-rev", "rev-list",
+  "for-each-ref", "symbolic-ref", "whatchanged", "grep", "show-ref", "var",
+  "count-objects", "verify-commit", "annotate", "help", "version",
+]
+
+# git subcommands that MUTATE but are part of the sanctioned loop. Allowed ONLY
+# when the effective working directory is a worktree under .claude/worktrees/.
+# Destructive variants (force-push, reset --hard, branch -D, …) are caught by the
+# git-specific checks in command_policy.py before this list is consulted.
+git_worktree_write = [
+  "add", "commit", "restore", "stash", "switch", "checkout", "rebase",
+  "cherry-pick", "fetch", "pull", "push", "mv", "rm", "reset", "tag",
+  "merge", "apply", "am", "revert", "notes",
+]
+
+# cargo subcommands an agent may run directly, for tight per-crate iteration
+# when the whole-workspace gate is too slow. These touch only the gitignored
+# build cache (or just read), never git state, so they are allowed anywhere.
+# `cargo fmt` is NOT here — it rewrites source in place; use `mise run format`.
+# `test` is NOT here either — this repo runs tests through `cargo nextest run` (faster,
+# and bare `cargo test` trips an sccache rustup-proxy flake); the `cargo-test-use-nextest`
+# deny_rule below redirects it. Mutating/exec verbs (run, clean, add, remove, update,
+# publish, install, fix) are denied — deps go through `mise run dep:add`, the gate through
+# `mise run check:backend` / `mise run format`.
+# Remove or leave empty ([]) if your repo does not use Cargo.
+cargo_subcommands = ["check", "clippy", "nextest", "build", "tree", "metadata"]
+
+# Read-only pnpm subcommands (inspection only). Dependency mutations
+# (`add`/`install`/`remove`/`update`) and script execution (`run`/`exec`/`dlx`)
+# are absent — adding deps is `mise run dep:add`, running tests is
+# `mise run test:unit`. Remove or leave empty ([]) if your repo does not use pnpm.
+pnpm_read_only = ["list", "ls", "why", "outdated", "licenses", "view", "info", "root", "bin"]
+
+# Project scripts an agent may execute (program + a script argument matching one
+# of these paths). Covers `python3 scripts/specs.py …` and bare `./scripts/…`.
+# The worktree lifecycle moved to the `wt` CLI (tools/wt-cli), driven by the `wt:*`
+# Mise tasks via `uv run` — a child process the hook never inspects — so it needs
+# no entry here.
+scripts = [
+  "scripts/guards/guard_commit_location.py",
+  "scripts/guards/guard_git_subprocess.py",
+  "scripts/guards/guard_doc_names.py",
+  "scripts/guards/guard_schema_names.py",
+  "scripts/guards/guard_stale_staged.py",
+  "scripts/guards/guard_worktree_paths.py",
+  "scripts/specs.py",
+  "scripts/docs.py",
+  "scripts/misc/gen_entities.py",
+  "scripts/gates/measure.py",
+  "scripts/gates/gate_run.py",
+  "scripts/gates/gate_steps.py",
+  "scripts/gates/gate_stats.py",
+  "scripts/gates/ci_pipeline.py",
+  "scripts/gates/e2e_changed.py",
+  "scripts/gates/precommit.py",
+  "scripts/telemetry/telemetry_report.py",
+  "scripts/tests/test_gate_run.py",
+  "scripts/tests/test_gate_steps.py",
+  "scripts/tests/test_gate_stats.py",
+  "scripts/tests/test_ci_pipeline.py",
+  "scripts/tests/test_guard_doc_names.py",
+  "scripts/tests/test_guard_schema_names.py",
+  "scripts/tests/test_guard_stale_staged.py",
+  "scripts/tests/test_guard_worktree_paths.py",
+  "scripts/tests/test_e2e_changed.py",
+  "scripts/tests/test_precommit.py",
+  "scripts/tests/test_agent_gate_vocabulary.py",
+  "scripts/tests/test_telemetry_report.py",
+  "scripts/tests/test_gen_entities.py",
+  "scripts/tests/test_measure.py",
+  "scripts/wt/rebuild_crate.py",
+  "scripts/tests/test_rebuild_crate.py",
+]
+
+# Interpreters allowed only for (a) syntax-checking (`bash -n …`) or (b) running an
+# allow-listed script (e.g. `python3 scripts/wt.py …`). A bare interpreter call
+# with a non-allow-listed target is denied.
+script_runners = ["python3", "python", "uv", "bash", "sh"]
+
+# Destructive denials evaluated against the raw sub-command BEFORE any allow.
+# Each fires regardless of where it runs and names the safe alternative. Patterns
+# are Python regexes (re.search, case-sensitive). Token-precise cases that a
+# regex handles poorly (force-push vs --force-with-lease, reset --hard, branch -D)
+# live in command_policy.py and are documented there.
+[[deny_rules]]
+id = "no-verify"
+pattern = '(^|\s)--no-verify(\s|$)'
+message = "Bypassing git hooks (--no-verify) is forbidden — fix the gate, do not skip it."
+
+[[deny_rules]]
+id = "git-filter-branch"
+pattern = '\bgit\b.*\bfilter-branch\b'
+message = "History rewriting (git filter-branch) is forbidden."
+
+[[deny_rules]]
+id = "git-update-ref"
+pattern = '\bgit\b.*\bupdate-ref\b'
+message = "Low-level ref surgery (git update-ref) is forbidden — use the wt:* tasks."
+
+[[deny_rules]]
+id = "git-clean-force"
+pattern = '\bgit\s+clean\b[^|;&]*\s-[a-zA-Z]*f'
+message = "git clean -f deletes untracked files irrecoverably and is forbidden. Remove specific files with the Write/Edit tools or review with `git clean -n` first."
+
+[[deny_rules]]
+id = "git-push-mirror-delete"
+pattern = '\bgit\s+push\b[^|;&]*(--mirror|--delete|:[A-Za-z])'
+message = "Deleting/mirroring remote refs is forbidden. Branch teardown is the human's Stage-8 op (mise run wt:land)."
+
+# Rebasing onto a remote ref is wrong in the worktree loop. The loop uses
+# `worktree.baseRef=head` so the local main branch is the integration target;
+# origin is routinely stale. `git rebase main` and the conflict-resolution
+# verbs (`--continue`/`--abort`) stay allowed — only a remote rebase target
+# is redirected to the sanctioned task.
+[[deny_rules]]
+id = "rebase-onto-remote"
+pattern = '\bgit\s+rebase\b[^|;&]*\borigin/'
+message = "The worktree loop rebases onto LOCAL main (origin is routinely stale). Use `mise run wt:rebase` — it rebases your branch onto local main and guides conflict resolution. Raw `git rebase --continue`/`--abort` during a rebase are fine."
+
+# The full e2e suite builds and spawns a browser per spec and can overwhelm the
+# machine. `test:e2e:changed` and `test:e2e:install` are spared by the lookahead.
+# The human runs `mise run ci-full` for the whole suite from their own terminal
+# (which is never gated by this hook).
+[[deny_rules]]
+id = "full-e2e-human-only"
+pattern = '\bmise\s+(run\s+)?(test:e2e(?![:\w-])|ci-full|pre-push)\b'
+message = "The full e2e suite is human-only — it can overwhelm the machine. Run `mise run pre-stop` (the hand-off gate: check + e2e for ONLY this worktree's changed specs), or `mise run test:e2e:changed`. To exercise an existing spec after a refactor, touch it with a trivial comment so it lands in the changed set."
+
+[[deny_rules]]
+id = "dangerous-rm"
+# rm combining recursive+force against a catastrophic target. (Bare rm is also
+# denied by default — not on the read-only allowlist — but this gives a clearer
+# message for the worst case.)
+pattern = '\brm\s+(?:\S+\s+)*-[a-zA-Z]*[rf][a-zA-Z]*\b[^|;&]*\s(/|/\*|~|~/|~/\*|\$HOME|\.\.|\*)(\s|$)'
+message = "Refusing rm -rf against a catastrophic target."
+
+# The AGENTIC_ALLOW_* escape hatches are HUMAN-ONLY. Every guard reads them from
+# os.environ (which a Bash command cannot mutate), so a hatch can only come from the
+# session environment the human preset BEFORE the agent started — never armed by the
+# agent at runtime. This blocks the one runtime vector: pushing a value into a child
+# process (inline `VAR=1 cmd` prefix, `env VAR=1 …`, `export VAR=1`, a file write), which
+# a pass-through env layer (e.g. a `get_env` default in a task runner) could otherwise
+# honor downstream of the PreToolUse check. Covers the whole family — MAIN_COMMIT,
+# MAIN_EDIT, GENERATED_EDIT, LEGACY_DOC_NAMES, CD_ESCAPE, PIPE_EXIT, STALE_STAGED, … —
+# and fires only on ASSIGNMENT (`NAME=`), so reads stay allowed (`printenv AGENTIC_ALLOW…`,
+# `$AGENTIC_ALLOW…`, the /change skill's step-1 verification).
+[[deny_rules]]
+id = "set-agentic-hatch"
+pattern = '\bAGENTIC_ALLOW[A-Z0-9_]*\s*='
+message = "Setting an AGENTIC_ALLOW_* escape hatch at runtime is forbidden — these are human-only and must be preset in the session environment before the agent starts (spec 0031). An agent cannot arm them itself."
+
+# `cargo test` is redirected to `cargo nextest run` — the project test runner (nextest
+# is faster and, unlike bare `cargo test`, doesn't trip the sccache rustup-proxy flake).
+# A deny_rule (not just dropping `test` from cargo_subcommands) gives the actionable
+# redirect message and also catches a toolchain prefix (`cargo +nightly test`). `cargo
+# nextest …` is unaffected: "nextest" has no word boundary before "test".
+[[deny_rules]]
+id = "cargo-test-use-nextest"
+pattern = '\bcargo\s+(\+\S+\s+)?test\b'
+message = "`cargo test` is blocked — use `cargo nextest run` (the project test runner; bare cargo test also trips an sccache rustup-proxy flake). Single test: `cargo nextest run -E 'test(name)'`. Whole suite: `mise run test`."

@@ -1,0 +1,22 @@
+# .claude/hooks/policy/generated — declarative manifest of GENERATED files for this repo.
+#
+# One pattern per line, EXACTLY .gitignore syntax: blank lines and `#` comments are
+# ignored, `!` negates an earlier match, `*` / `**` / `/` glob as in gitignore, and
+# every pattern is anchored at the repo root. This file lives next to allowlist.toml
+# in the tracked policy dir, so it travels with `git clone` like the rest of the harness.
+#
+# Two consumers read these patterns:
+#   1. Review skim — the dashboard marks a matching file as machine-output so a
+#      reviewer doesn't spend attention reading generator diffs.
+#   2. Edit guard — the PreToolUse hook BLOCKS Write/Edit/MultiEdit/NotebookEdit whose
+#      target matches a pattern: regenerate the file via its generator, don't hand-edit
+#      (a hand edit drifts from the generator and the contract/entity gates only catch
+#      it later). Human override for a deliberate edit: AGENTIC_ALLOW_GENERATED_EDIT=1.
+#
+# This ships EMPTY (no active patterns ⇒ nothing is marked or blocked). Add your repo's
+# generated paths below. Example (commented out):
+#
+#   openapi/agenticd.openapi.json
+#   apps/web/src/generated/
+#   crates/agenticd-db/src/entities/
+#   !crates/agenticd-db/src/entities/entity_relations.rs
