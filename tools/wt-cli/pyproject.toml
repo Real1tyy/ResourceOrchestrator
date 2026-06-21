@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wt-cli"
+version = "0.1.0"
+description = "Spec-driven git worktree lifecycle CLI: new/rebase/verify/unlock/list/land, with a repo-owned pre/post hook seam."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Real1ty" }]
+license = "MIT"
+keywords = ["git", "worktree", "cli"]
+dependencies = [
+    # Typer powers the CLI surface. It transitively pulls in click + rich,
+    # which give us shell completion, type-checked args, and rich --help
+    # formatting for free. See docs/decisions/2026-05-14-wt-cli-phase-2-typer.md.
+    "typer>=0.12,<1.0",
+]
+
+[project.scripts]
+wt = "wt_cli.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wt_cli"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "src/wt_cli",
+  "tests",
+  "README.md",
+  "pyproject.toml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
