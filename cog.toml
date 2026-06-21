@@ -1,0 +1,28 @@
+# cocogitto — Conventional Commits verifier (shipped by agenticd init).
+#
+# `cog verify` runs in the commit-msg lefthook command; `cog check`
+# validates history when desired. Changelog generation is left to the
+# repo's own tooling, so cocogitto's changelog is disabled.
+
+# Merge commits are tool-generated, not author-written — don't gate them.
+ignore_merge_commits = true
+
+# Keep cocogitto out of changelog generation; the repo owns that.
+disable_changelog = true
+
+# Conventional Commit types. `feat` and `fix` are built in; the rest are
+# the Angular-convention set this harness standardises on.
+#
+# Known scopes (advisory — cocogitto does not hard-enforce a scope allowlist):
+#   backend, frontend, docs, tooling, ci
+[commit_types]
+feat     = { changelog_title = "Features" }
+fix      = { changelog_title = "Bug Fixes" }
+chore    = { changelog_title = "Miscellaneous Chores" }
+docs     = { changelog_title = "Documentation" }
+refactor = { changelog_title = "Refactoring" }
+perf     = { changelog_title = "Performance" }
+test     = { changelog_title = "Tests" }
+build    = { changelog_title = "Build System" }
+ci       = { changelog_title = "Continuous Integration" }
+style    = { changelog_title = "Style" }

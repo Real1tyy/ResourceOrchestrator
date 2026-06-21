@@ -5,3 +5,4 @@ logs/
 .env.*
 !.env.example
 .config/mise.local.toml
+**/__pycache__/
