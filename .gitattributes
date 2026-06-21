@@ -1,0 +1,20 @@
+# .gitattributes — seeded by agenticd init.
+# Normalise line endings on check-out (LF everywhere).
+* text=auto eol=lf
+
+# Binary formats — skip diff and merge.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.woff binary
+*.woff2 binary
+*.ttf  binary
+*.eot  binary
+
+# Generated lock files — diff as text but skip merge-driver guessing.
+Cargo.lock  text merge=union
+package-lock.json text merge=union
+pnpm-lock.yaml  text merge=union
+yarn.lock  text merge=union

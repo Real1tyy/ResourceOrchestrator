@@ -1,0 +1,7 @@
+.claude/worktrees/
+.agentic/
+logs/
+.env
+.env.*
+!.env.example
+.config/mise.local.toml
