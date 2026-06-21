@@ -1,0 +1,31 @@
+<!-- agenticd:managed-doc — DO NOT hand-edit this file. Generated mirror, byte-synced
+     by `agenticd init` from crates/agenticd-claude/assets/docs/memory/_template.md.tmpl.
+     Edit that bundle template, then run `agenticd init` to sync. -->
+---
+type: memory
+id: memory-{{slug}}
+status: accepted
+tags: []
+related_docs: []
+related_worktrees: []
+related_sessions: []
+created: {{date}}
+updated: {{date}}
+---
+
+<!-- Save as YYYY-MM-DD-HHMMSS-slug.md. One file per pattern / gotcha / surprise.
+     Label each finding [Code] or [Process]. Skip routine, no-surprise runs. -->
+
+# Memory: {{title}}
+
+## [Code|Process] <one-line finding>
+
+**Pattern** — what behaviour, gotcha, or approach was observed.
+
+**When this surfaces** — the conditions under which the next agent will hit it.
+
+**When not to use** — counter-conditions where the pattern does not apply.
+
+**Examples** — concrete code or session references from this run.
+
+**Enforcement idea** — how the tool could eventually catch this (hook, lint, gate).
