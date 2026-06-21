@@ -1,62 +1,49 @@
-# ─── Dev + serve + daemon (repo-owned STUBS) ──────────────────────────────────
-# REPO-OWNED — seeded once by `agenticd init`, never overwritten afterward.
-# Replace each no-op body with your stack's real command. These dev/serve/daemon
-# tasks are stack-specific; a downstream repo keeps only the ones it needs.
-#
-# Prefix-less task syntax (`["dev:web"]`) is mandatory in an included task file.
+# ─── Dev + serve + daemon (repo-owned) ────────────────────────────────────────
+# REPO-OWNED — seeded once, never overwritten. The backend is a skeleton (no server
+# loop yet), so `dev:backend`/`serve:*` run the `roch` binary as a placeholder until the
+# daemon lands (MVP-1). `daemon:*` (systemd --user service mgmt) is wired with the
+# packaging spec. Prefix-less task syntax is mandatory in an included task file.
 
 [dev]
-description = "Run dev servers in parallel"
-run = 'echo "dev: not yet configured"'
+description = "Run the frontend dev server (Vite). Backend dev server lands with the daemon (MVP-1)."
+run = "pnpm -C apps/web run dev"
 
 ["dev:backend"]
-description = "Run the backend in dev mode"
-run = 'echo "dev:backend: not yet configured"'
+description = "Run the backend (placeholder: builds + runs the roch skeleton)"
+run = "cargo run -p roch-cli"
 
 ["dev:web"]
-description = "Run the frontend dev server"
-run = 'echo "dev:web: not yet configured"'
+description = "Run the frontend dev server (Vite, HMR)"
+run = "pnpm -C apps/web run dev"
 
 [serve]
-description = "Run backend + frontend (release) in parallel"
-run = 'echo "serve: not yet configured"'
+description = "Run the frontend preview build. Combined backend+frontend serve lands with the daemon."
+run = "pnpm -C apps/web run preview"
 
 ["serve:backend"]
-description = "Run the backend (release build)"
-run = 'echo "serve:backend: not yet configured"'
+description = "Run the backend release build (placeholder until the daemon lands)"
+run = "cargo run --release -p roch-cli"
 
 ["serve:frontend"]
 description = "Run the frontend dev server with HMR"
-run = 'echo "serve:frontend: not yet configured"'
-
-["serve:debug"]
-description = "Run backend (hot-reload) + frontend in parallel"
-run = 'echo "serve:debug: not yet configured"'
-
-["serve:debug:backend"]
-description = "Run the backend with hot reload (debug build)"
-run = 'echo "serve:debug:backend: not yet configured"'
+run = "pnpm -C apps/web run dev"
 
 ["daemon:install"]
-description = "Install the long-running service"
-run = 'echo "daemon:install: not yet configured"'
+description = "Install the long-running user service (wired with the packaging spec)"
+run = 'echo "daemon:install: not yet configured (no service to install)"; exit 0'
 
 ["daemon:restart"]
 description = "Rebuild + restart the running service"
-run = 'echo "daemon:restart: not yet configured"'
-
-["daemon:deploy"]
-description = "Rebuild UI + binary, then restart the service"
-run = 'echo "daemon:deploy: not yet configured"'
-
-["daemon:uninstall"]
-description = "Stop, disable, and remove the service"
-run = 'echo "daemon:uninstall: not yet configured"'
+run = 'echo "daemon:restart: not yet configured"; exit 0'
 
 ["daemon:status"]
 description = "Show the service status"
-run = 'echo "daemon:status: not yet configured"'
+run = 'echo "daemon:status: not yet configured"; exit 0'
 
 ["daemon:logs"]
 description = "Follow the service logs"
-run = 'echo "daemon:logs: not yet configured"'
+run = 'echo "daemon:logs: not yet configured"; exit 0'
+
+["daemon:uninstall"]
+description = "Stop, disable, and remove the service"
+run = 'echo "daemon:uninstall: not yet configured"; exit 0'

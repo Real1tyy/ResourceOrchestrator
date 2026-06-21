@@ -1,39 +1,46 @@
-# ─── Codegen + deps + bootstrap (repo-owned STUBS) ────────────────────────────
-# REPO-OWNED — seeded once by `agenticd init`, never overwritten afterward.
-# Replace each no-op body with your stack's real command. `setup` / `wt:setup` /
-# `deps:*` are repo-owned because their bodies are stack-specific dep installs; the
-# harness owns only their names (e.g. wt:new calls `mise run setup` by name).
-#
-# Prefix-less task syntax (`["gen:openapi"]`) is mandatory in an included task file.
+# ─── Codegen + deps + bootstrap (repo-owned) ──────────────────────────────────
+# REPO-OWNED — seeded once, never overwritten. `setup` / `wt:setup` / `deps:*` install
+# this repo's deps; codegen tasks (OpenAPI client, DB entities) get real bodies when the
+# API/DB land via specs. Prefix-less task syntax is mandatory in an included task file.
 
 [setup]
 description = "Bootstrap a fresh checkout (install tools + deps)"
-run = "mise install"
+run = [
+  "mise install",
+  "pnpm -C apps/web install",
+  "cargo fetch",
+]
 
 ["wt:setup"]
-description = "Bootstrap a fresh worktree: install deps, format whole tree. Called automatically by wt:new — replace body with your stack's setup commands"
-run = 'echo "wt:setup: no-op — add your dep-install / format commands here"'
+description = "Bootstrap a fresh worktree: install deps. Called automatically by wt:new."
+run = [
+  "pnpm -C apps/web install",
+  "cargo fetch",
+]
 
 ["gen:openapi"]
-description = "Regenerate the API contract artifacts (commit the diff)"
-run = 'echo "gen:openapi: not yet configured"'
+description = "Regenerate the API contract (utoipa → openapi.json → Orval) — wired with the API (MVP-2)"
+run = 'echo "gen:openapi: no API surface yet"; exit 0'
 
 ["db:generate-entities"]
-description = "Regenerate DB entities from migrations (commit the diff)"
-run = 'echo "db:generate-entities: not yet configured"'
+description = "Regenerate DB types from migrations — wired with the SQLite schema (MVP-1)"
+run = 'echo "db:generate-entities: no DB schema yet"; exit 0'
 
 ["docs:sync"]
 description = "Pull and cache vendor documentation"
 run = 'echo "docs:sync: not yet configured"; exit 0'
 
 ["deps:ensure"]
-description = "Ensure all dependencies are installed"
-run = 'echo "deps:ensure: not yet configured"'
+description = "Ensure all dependencies are installed (frontend node_modules + cargo registry)"
+run = [
+  "pnpm -C apps/web install --prefer-offline --silent",
+  "cargo fetch --quiet",
+]
 
 ["deps:validate"]
 description = "Validate the dependency-automation config"
-run = 'echo "deps:validate: not yet configured"'
+run = 'echo "deps:validate: not yet configured"; exit 0'
 
 ["deps:scan"]
 description = "Local read-only report of available dependency updates"
-run = 'echo "deps:scan: not yet configured"'
+run = 'echo "deps:scan: not yet configured"; exit 0'

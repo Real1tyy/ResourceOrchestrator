@@ -1,46 +1,50 @@
-# ─── Tests + change report (repo-owned STUBS) ─────────────────────────────────
-# REPO-OWNED — seeded once by `agenticd init`, never overwritten afterward.
-# Replace each no-op body with your stack's real test command; the NAMES are the
-# harness contract.
-#
-# Prefix-less task syntax (`["test:unit"]`) is mandatory in an included task file.
+# ─── Tests + change report (repo-owned) ───────────────────────────────────────
+# REPO-OWNED — seeded once, never overwritten. NAMES are the harness contract.
+# Backend tests run through `cargo nextest`; frontend unit through vitest; e2e through
+# Playwright. Prefix-less task syntax is mandatory in an included task file.
 
 [test]
-description = "Full test suite"
-run = 'echo "test: not yet configured"'
+description = "Full test suite (backend nextest + frontend unit)"
+run = [
+  "cargo nextest run --workspace --no-tests=pass",
+  "pnpm -C apps/web run test",
+]
 
 ["test:unit"]
-description = "Unit tests only"
-run = 'echo "test:unit: not yet configured"'
+description = "Unit tests (backend nextest + frontend vitest)"
+run = [
+  "cargo nextest run --workspace --lib --bins --no-tests=pass",
+  "pnpm -C apps/web run test",
+]
 
 ["test:integration"]
-description = "Integration tests"
-run = 'echo "test:integration: not yet configured"'
+description = "Integration tests (Rust tests/ directory targets)"
+run = "cargo nextest run --workspace --test '*' --no-tests=pass"
 
 ["test:e2e"]
-description = "Full end-to-end suite (human-only)"
-run = 'echo "test:e2e: not yet configured"'
+description = "Full Playwright end-to-end suite (human-only)"
+run = "pnpm -C apps/web run e2e"
 
 ["test:e2e:changed"]
-description = "E2e tests for specs changed by this worktree (the agent gate)"
-run = 'echo "test:e2e:changed: not yet configured"'
+description = "E2e for specs changed by this worktree (the agent gate). Until a spec→test map exists, runs the (small) Playwright suite."
+run = "pnpm -C apps/web run e2e"
 
 ["test:e2e:changed:dirty"]
-description = "E2e tests for changed specs including uncommitted"
-run = 'echo "test:e2e:changed:dirty: not yet configured"'
+description = "E2e for changed specs including uncommitted"
+run = "pnpm -C apps/web run e2e"
 
 ["test:e2e:install"]
-description = "Install e2e browser dependencies"
-run = 'echo "test:e2e:install: not yet configured"'
+description = "Install the Playwright browser (chromium) the e2e suite needs"
+run = "pnpm -C apps/web exec playwright install chromium"
 
 ["test:stress"]
-description = "Stress tests"
-run = 'echo "test:stress: not yet configured"; exit 0'
+description = "Backend stress/load harness — wired with the daemon (MVP-1)"
+run = 'echo "test:stress: no daemon to stress yet (see docs/specs/ perf harness spec)"; exit 0'
 
 ["test:scripts"]
-description = "Test the scripts/ helpers"
-run = 'echo "test:scripts: not yet configured"'
+description = "Test the scripts/ helpers (none have tests yet)"
+run = 'echo "test:scripts: no script tests yet"; exit 0'
 
 [change-report]
-description = "Generate a change report for the current worktree diff vs main"
-run = 'echo "change-report: no-op — add your diff/report generation command here"'
+description = "Summarize this worktree's diff vs main (used by the pre-stop hand-off gate)"
+run = "git --no-pager diff --stat \"$(git merge-base main HEAD 2>/dev/null || echo HEAD)\"...HEAD 2>/dev/null || true"

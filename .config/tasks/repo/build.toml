@@ -1,30 +1,43 @@
-# ─── Build + lint + format + typecheck (repo-owned STUBS) ─────────────────────
-# REPO-OWNED — seeded once by `agenticd init`, never overwritten afterward.
-# Replace each no-op body with your stack's real command; the NAMES are the
-# harness contract.
+# ─── Build + lint + format + typecheck (repo-owned) ───────────────────────────
+# REPO-OWNED — seeded once by `agenticd init`, never overwritten afterward. The task
+# NAMES are the harness contract; the bodies are this repo's real commands.
 #
-# Prefix-less task syntax (`["format:check"]`) is mandatory in an included task file.
+# `cargo fmt` / `cargo nextest` are deliberately driven through these mise tasks (not
+# bare agent Bash): the policy hook allow-lists `mise run <task>`, and mise runs the
+# real tool in a child process. Prefix-less task syntax is mandatory in an included file.
 
 [lint]
-description = "Linter"
-run = 'echo "lint: not yet configured"'
+description = "Lint (clippy, warnings-as-errors) across the whole workspace"
+run = "cargo clippy --workspace --all-targets -- -D warnings"
 
 [format]
-description = "Auto-format the codebase"
-run = 'echo "format: not yet configured"'
+description = "Auto-format the whole tree (rustfmt + prettier)"
+run = [
+  "cargo fmt --all",
+  "pnpm -C apps/web run format",
+]
 
 ["format:check"]
-description = "Check formatting without writing"
-run = 'echo "format:check: not yet configured"'
+description = "Check formatting without writing (rustfmt + prettier)"
+run = [
+  "cargo fmt --all --check",
+  "pnpm -C apps/web run format:check",
+]
 
 [typecheck]
-description = "Type-check the codebase"
-run = 'echo "typecheck: not yet configured"'
+description = "Type-check the frontend (tsc --noEmit); the backend is type-checked by `cargo clippy`"
+run = "pnpm -C apps/web run typecheck"
 
 [build]
-description = "Build the project"
-run = 'echo "build: not yet configured"'
+description = "Build backend (workspace) + frontend (vite)"
+run = [
+  "cargo build --workspace",
+  "pnpm -C apps/web run build",
+]
 
 ["build:e2e"]
-description = "Debug build for the agent e2e gate"
-run = 'echo "build:e2e: not yet configured"'
+description = "Debug build the artifacts the agent e2e gate needs (roch binary + frontend)"
+run = [
+  "cargo build -p roch-cli",
+  "pnpm -C apps/web run build",
+]

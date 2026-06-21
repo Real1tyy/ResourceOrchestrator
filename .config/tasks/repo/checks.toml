@@ -1,79 +1,82 @@
-# ─── Quality-gate checks (repo-owned STUBS) ───────────────────────────────────
-# REPO-OWNED — `agenticd init` SEEDS this file once on a fresh repo and never
-# overwrites it afterward (Tier-2 seed-once). Replace each no-op body below with
-# your stack's real check command; the task NAMES are the harness contract (the
-# harness gate entrypoints in tasks/harness/gates.toml delegate to these by name).
+# ─── Quality-gate checks (repo-owned) ─────────────────────────────────────────
+# REPO-OWNED — seeded once by `agenticd init`, never overwritten. The task NAMES are
+# the harness contract (the gate entrypoints in tasks/harness/gates.toml delegate to
+# these by name); the bodies are this repo's real commands.
 #
-# Prefix-less task syntax (`["check:frontend"]`) is mandatory in an included task file.
+# Checks that need tooling/artifacts this skeleton does not have yet (secrets scan,
+# SAST, OpenAPI/entity drift) are honest exit-0 stubs with a note — they get a real
+# body when the subsystem they guard lands via a spec. Prefix-less syntax is mandatory.
 
 [check]
-description = "All static checks (lint, typecheck, format, spelling) — replace with your real gate"
-run = 'echo "check: not yet configured"'
+description = "All static checks — the repo aggregate"
+depends = ["check:gates"]
 
 ["check:gates"]
-description = "The check aggregate that `check` result-caches (spec-gate-result-cache) — replace with your real gate"
-run = 'echo "check:gates: not yet configured"'
+description = "The cacheable check aggregate: backend + frontend + spelling"
+depends = ["check:backend", "check:frontend", "check:spelling"]
 
 ["check:frontend"]
 description = "Frontend checks (format + lint + typecheck + build + unit tests)"
-run = 'echo "check:frontend: not yet configured"'
+run = "pnpm -C apps/web run check"
 
 ["check:dead-code:frontend"]
-description = "Detect unused exports/files/dependencies in the frontend"
-run = 'echo "check:dead-code:frontend: not yet configured"'
+description = "Detect unused exports/files/dependencies in the frontend (wired when the UI grows)"
+run = 'echo "check:dead-code:frontend: no UI surface to scan yet"; exit 0'
 
 ["check:backend:compile"]
-description = "Backend compile + lint (no tests)"
-run = 'echo "check:backend:compile: not yet configured"'
+description = "Backend compile + lint (clippy, no tests)"
+run = "cargo clippy --workspace --all-targets -- -D warnings"
 
 ["check:backend"]
-description = "Backend gate: compile + tests"
-run = 'echo "check:backend: not yet configured"'
+description = "Backend gate: compile + lint + unit/integration tests (nextest)"
+depends = ["check:backend:compile"]
+# --no-tests=pass: an empty-skeleton crate with no tests yet is not a failure.
+run = "cargo nextest run --workspace --no-tests=pass"
 
 ["check:backend:slow"]
-description = "Backend slow-test gate (human-only, rides in ci-full)"
-run = 'echo "check:backend:slow: not yet configured"'
+description = "Backend slow/ignored-test gate (human-only, rides in ci-full)"
+run = "cargo nextest run --workspace --run-ignored ignored-only --no-tests=pass"
 
 ["check:git-subprocess"]
-description = "Guard: forbid raw git subprocesses outside the sanctioned builder"
-run = 'echo "check:git-subprocess: not yet configured"; exit 0'
+description = "Guard: forbid raw git subprocesses outside the sanctioned builder (no Rust git layer yet)"
+run = 'echo "check:git-subprocess: no backend git layer to scan yet"; exit 0'
 
 ["check:doc-names"]
 description = "Enforce collision-free doc filenames + unique ids"
-run = 'echo "check:doc-names: not yet configured"; exit 0'
+run = "python3 scripts/guards/guard_doc_names.py"
 
 ["check:schema-names"]
-description = "Guard: forbid duplicate generated schema names"
-run = 'echo "check:schema-names: not yet configured"; exit 0'
+description = "Guard: forbid duplicate generated schema names (no generated schemas yet)"
+run = 'echo "check:schema-names: no generated schemas yet"; exit 0'
 
 ["check:contract"]
-description = "API contract drift check (generated client vs spec)"
-run = 'echo "check:contract: not yet configured"'
+description = "API contract drift (generated client vs OpenAPI spec) — wired with the API spec (MVP-2)"
+run = 'echo "check:contract: no OpenAPI surface yet"; exit 0'
 
 ["check:entities"]
-description = "DB entity drift check (regenerate from migrations, fail on diff)"
-run = 'echo "check:entities: not yet configured"'
+description = "DB entity drift check — wired with the SQLite schema (MVP-1)"
+run = 'echo "check:entities: no DB schema yet"; exit 0'
 
 ["check:spelling"]
 description = "Spell-check the repo"
-run = 'echo "check:spelling: not yet configured"'
+run = "typos"
 
 ["check:security"]
-description = "Dependency policy and vulnerability scans"
-run = 'echo "check:security: not yet configured"'
+description = "Dependency policy + vulnerability scan (cargo-deny) — wired when crates take dependencies"
+run = 'echo "check:security: workspace has no third-party deps yet"; exit 0'
 
 ["check:secrets"]
-description = "Scan the working tree for committed secrets"
-run = 'echo "check:secrets: not yet configured"'
+description = "Scan the working tree for committed secrets (wire gitleaks when secrets exist)"
+run = 'echo "check:secrets: not yet configured"; exit 0'
 
 ["check:secrets:history"]
-description = "Scan the full git history for secrets (slow)"
-run = 'echo "check:secrets:history: not yet configured"'
+description = "Scan full git history for secrets (slow; human/CI)"
+run = 'echo "check:secrets:history: not yet configured"; exit 0'
 
 ["check:sast"]
-description = "Static Application Security Testing scan"
-run = 'echo "check:sast: not yet configured"'
+description = "Static Application Security Testing scan (wired when there is application code)"
+run = 'echo "check:sast: not yet configured"; exit 0'
 
 ["check:sast:ci"]
 description = "SAST scan with SARIF output (CI mirror)"
-run = 'echo "check:sast:ci: not yet configured"'
+run = 'echo "check:sast:ci: not yet configured"; exit 0'
