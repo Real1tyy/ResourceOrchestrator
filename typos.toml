@@ -1,0 +1,14 @@
+# Configuration for `typos` (check:spelling).
+[files]
+extend-exclude = [
+  "target/",
+  "**/node_modules/",
+  "**/dist/",
+  "*.lock",
+  "Cargo.lock",
+  "pnpm-lock.yaml",
+]
+
+[default.extend-words]
+# Valid spelling variant used in a harness-owned file (tools/wt-cli).
+unparseable = "unparseable"

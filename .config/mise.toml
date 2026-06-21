@@ -21,13 +21,19 @@
 # Run a task:   mise run <task>   (or: mise <task>)
 
 [tools]
-# Declare the tools this repo needs. mise installs them automatically.
-# Examples:
-#   node = "22"
-#   python = "3.12"
-#   rust = "stable"
-#   lefthook = "latest"
-#   cog = "latest"
+# Tools mise installs + pins for every contributor and agent. The Rust toolchain is
+# pinned separately in rust-toolchain.toml (rustup reads it); everything non-Rust lives
+# here. Heavier/optional tooling (cargo-flamegraph, hyperfine, oha) is documented in
+# docs/TOOLS.md and installed on demand rather than forced into every checkout.
+node = "22"
+pnpm = "latest"
+lefthook = "latest"        # git-hook orchestrator (lefthook.yml)
+cocogitto = "latest"       # `cog` — Conventional Commits verifier (cog.toml)
+"aqua:nextest-rs/nextest/cargo-nextest" = "latest"  # project test runner (prebuilt; faster than `cargo test`)
+typos = "latest"           # spell-checker (check:spelling)
+# Added when the subsystem that needs them lands:
+#   cargo-deny  → check:security (once crates take third-party deps)
+#   hyperfine, flamegraph → perf tooling (see docs/TOOLS.md)
 
 [task_config]
 # `includes` REPLACES mise's default file-task search — every task file MUST be

@@ -1,0 +1,5 @@
+# Pin the Rust toolchain so every contributor and agent builds with the same compiler.
+# rustup reads this automatically; mise manages the non-Rust tools (.config/mise.toml).
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]

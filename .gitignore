@@ -6,3 +6,13 @@ logs/
 !.env.example
 .config/mise.local.toml
 **/__pycache__/
+
+# Rust build artifacts (Cargo.lock IS committed — this is a workspace with binaries)
+/target/
+
+# Node / frontend build output (apps/web also has its own .gitignore)
+node_modules/
+dist/
+playwright-report/
+test-results/
+*.tsbuildinfo
