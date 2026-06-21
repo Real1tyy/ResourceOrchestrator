@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/roch-core",
+    "crates/roch-db",
+    "crates/roch-exec",
+    "crates/roch-linux",
+    "crates/roch-daemon",
+    "crates/roch-cli",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+# Empty skeleton: crates compile to nothing yet. Real code (and its dependencies)
+# lands incrementally through the specs under docs/specs/.
+[workspace.dependencies]
+roch-core = { path = "crates/roch-core" }
+roch-db = { path = "crates/roch-db" }
+roch-exec = { path = "crates/roch-exec" }
+roch-linux = { path = "crates/roch-linux" }
+
+# Line tables in release so cargo-flamegraph / perf can symbolicate — the perf
+# tooling is wired from day one even though there is nothing to profile yet.
+[profile.release]
+debug = 1

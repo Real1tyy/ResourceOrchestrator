@@ -1,0 +1,9 @@
+[package]
+name = "roch-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+# Skeleton crate — no benches/tests dirs are wired yet.
+autobenches = false
+
+[dependencies]
