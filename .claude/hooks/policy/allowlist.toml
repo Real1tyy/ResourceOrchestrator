@@ -72,6 +72,17 @@ mise_tasks = [
   "gate:fix", "dep:add", "perf:measure", "cargo:rebuild-crate",
   # one-time bootstrap / dependency sync:
   "setup", "deps:ensure", "deps:validate", "deps:scan", "deps:sync",
+  # ── repo-specific stack tasks (roch) ──
+  # granular gate steps (iterate one failing lane), build/typecheck:
+  "check:frontend", "check:backend", "check:backend:compile", "check:spelling",
+  "typecheck", "build", "build:e2e",
+  # dev servers:
+  "dev", "dev:backend", "dev:web",
+  # changed-spec e2e (full test:e2e stays human-only via deny_rule), stress + perf:
+  "test:e2e:changed", "test:e2e:install", "test:stress",
+  "perf:bench", "perf:flamegraph", "perf:cli-coldstart",
+  # codegen + worktree bootstrap:
+  "gen:openapi", "db:generate-entities", "wt:setup",
 ]
 
 # Mise meta-subcommands (not task runs) an agent may use: inspection + bootstrap.
@@ -160,7 +171,7 @@ git_worktree_write = [
 # publish, install, fix) are denied — deps go through `mise run dep:add`, the gate through
 # `mise run check:backend` / `mise run format`.
 # Remove or leave empty ([]) if your repo does not use Cargo.
-cargo_subcommands = ["check", "clippy", "nextest", "build", "tree", "metadata"]
+cargo_subcommands = ["check", "clippy", "nextest", "build", "tree", "metadata", "bench"]
 
 # Read-only pnpm subcommands (inspection only). Dependency mutations
 # (`add`/`install`/`remove`/`update`) and script execution (`run`/`exec`/`dlx`)
