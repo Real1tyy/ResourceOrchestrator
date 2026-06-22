@@ -4,24 +4,24 @@ version = 4
 
 [[package]]
 name = "roch-cli"
-version = "0.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "roch-core"
-version = "0.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "roch-daemon"
-version = "0.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "roch-db"
-version = "0.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "roch-exec"
-version = "0.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "roch-linux"
-version = "0.0.0"
+version = "0.1.0"

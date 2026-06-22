@@ -1,1 +1,1 @@
-//! `roch-exec` — process execution + log/metrics orchestration. Skeleton; implementation lands via the specs.
+//! `roch-exec` — process execution plus log and metrics orchestration. Skeleton; implementation lands via the specs.

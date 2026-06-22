@@ -1,1 +1,1 @@
-//! `roch-db` — SQLite (WAL) persistence adapter. Skeleton; implementation lands via the specs.
+//! `roch-db` — the `SQLite`-backed (WAL) persistence adapter. Skeleton; implementation lands via the specs.

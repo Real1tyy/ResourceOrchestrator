@@ -1,5 +1,5 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
     "crates/roch-core",
     "crates/roch-db",
@@ -10,19 +10,107 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.0"
-edition = "2021"
-license = "MIT OR Apache-2.0"
+edition = "2024"
+rust-version = "1.90"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+authors = ["Real1ty"]
+repository = "https://github.com/Real1ty/ResourceOrchestrator"
+publish = false
 
-# Empty skeleton: crates compile to nothing yet. Real code (and its dependencies)
-# lands incrementally through the specs under docs/specs/.
+# Every external dependency is pinned EXACTLY at the workspace root and inherited by
+# crates via `workspace = true`. Bump deliberately. Versions track the current releases
+# of the stack chosen in docs/ARCHITECTURE.md §4; the foundation crates are empty, so a
+# dep is only resolved once a crate actually adopts it (verify the pin then).
 [workspace.dependencies]
+# --- async runtime ---
+tokio = { version = "=1.52.3", features = ["full"] }
+futures-util = "=0.3.32"
+
+# --- web server (axum 0.8) + SSE ---
+axum = { version = "=0.8.9", features = ["macros"] }
+tower = { version = "=0.5.3", features = ["util"] }
+tower-http = { version = "=0.6.11", features = ["fs", "trace", "cors", "compression-gzip"] }
+hyper = "=1.9.0"
+
+# --- OpenAPI contract (utoipa → OpenAPI → Orval; Scalar docs UI) ---
+utoipa = { version = "=5.5.0", features = ["axum_extras", "chrono", "uuid"] }
+utoipa-axum = "=0.2.0"
+utoipa-scalar = { version = "=0.3.0", features = ["axum"] }
+
+# --- persistence (sqlx + SQLite WAL; raw analytical SQL, no ORM) ---
+sqlx = { version = "=0.8.3", default-features = false, features = [
+    "runtime-tokio",
+    "sqlite",
+    "macros",
+    "migrate",
+    "chrono",
+    "uuid",
+] }
+
+# --- system + process control ---
+sysinfo = "=0.33.1"
+# Unix signal delivery (SIGTERM → grace → SIGKILL of the process group) without an
+# `unsafe` block (the workspace forbids unsafe_code).
+nix = { version = "=0.29.0", features = ["signal"] }
+
+# --- UI embedding (bake apps/web/dist into the binary) ---
+rust-embed = "=8.5.0"
+
+# --- serialization + types ---
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.150"
+uuid = { version = "=1.23.1", features = ["v4", "v7", "serde"] }
+chrono = { version = "=0.4.44", features = ["serde"] }
+sha2 = "=0.10.9"
+
+# --- logging / tracing ---
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "json", "fmt"] }
+tracing-appender = "=0.2.5"
+
+# --- errors ---
+thiserror = "=2.0.18"
+anyhow = "=1.0.102"
+
+# --- cli ---
+clap = { version = "=4.6.1", features = ["derive", "env"] }
+
+# --- test/dev helpers ---
+tempfile = "=3.27.0"
+
+# --- internal crates ---
 roch-core = { path = "crates/roch-core" }
 roch-db = { path = "crates/roch-db" }
 roch-exec = { path = "crates/roch-exec" }
 roch-linux = { path = "crates/roch-linux" }
 
-# Line tables in release so cargo-flamegraph / perf can symbolicate — the perf
-# tooling is wired from day one even though there is nothing to profile yet.
-[profile.release]
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unreachable_pub = "warn"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+
+[profile.dev]
+opt-level = 0
 debug = 1
+# One `.dwp` sidecar instead of DWARF baked into every binary — leaner artifacts, faster
+# mold relinks, full debugging preserved.
+split-debuginfo = "packed"
+
+# Dependencies: drop their debug info (we never step into them). Workspace members keep
+# `debug = 1` above, so our own file:line backtraces are untouched.
+[profile.dev.package."*"]
+debug = 0
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
