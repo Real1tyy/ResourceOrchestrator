@@ -31,9 +31,25 @@ lefthook = "latest"        # git-hook orchestrator (lefthook.yml)
 cocogitto = "latest"       # `cog` — Conventional Commits verifier (cog.toml)
 "aqua:nextest-rs/nextest/cargo-nextest" = "latest"  # project test runner (prebuilt; faster than `cargo test`)
 typos = "latest"           # spell-checker (check:spelling)
+# Compile cache (.cargo/config.toml drives it via rustc-wrapper = "sccache"). Pin a current
+# release so SCCACHE_BASEDIRS (cross-checkout cache-key normalization) is available.
+# CAVEAT: `~/.cargo/bin` is AHEAD of mise on PATH, so a hand-installed `~/.cargo/bin/sccache`
+# SHADOWS this pin — remove/upgrade it, then `sccache --stop-server` once.
+"aqua:mozilla/sccache" = "0.15.0"
 # Added when the subsystem that needs them lands:
 #   cargo-deny  → check:security (once crates take third-party deps)
 #   hyperfine, flamegraph → perf tooling (see docs/TOOLS.md)
+
+[env]
+# rustfmt toolchain pin: the fmt tasks run `cargo +$RUSTFMT_TOOLCHAIN fmt` so a leaked
+# RUSTUP_TOOLCHAIN can't make the gate format differently from a clean shell. MUST equal the
+# `channel` in ./rust-toolchain.toml.
+RUSTFMT_TOOLCHAIN = "1.96.0"
+# Build-pipeline parallelism cap. When the gate governor exists it exports AGENTIC_GATE_JOBS
+# (one shared core budget divided across concurrent gate slots); `get_env` reads it so the
+# nested `mise run` doesn't clobber the governor's value. Ungoverned default: 8.
+CARGO_BUILD_JOBS = "{{ get_env(name='AGENTIC_GATE_JOBS', default='8') }}"
+NEXTEST_TEST_THREADS = "{{ get_env(name='AGENTIC_GATE_JOBS', default='8') }}"
 
 [task_config]
 # `includes` REPLACES mise's default file-task search — every task file MUST be

@@ -1,0 +1,33 @@
+# Cargo build configuration. Lives here (not in mise [env]) so it applies to EVERY cargo
+# invocation — mise-wrapped gates and ad-hoc `cargo` alike. See docs/TOOLS.md.
+
+[build]
+# Compile cache. sccache wraps rustc so a fresh checkout reuses cached dependency
+# compilations instead of cold-compiling the whole tree. Verified installed; a missing
+# sccache fails loudly, never mis-builds. clippy is unaffected for workspace crates (they
+# route through RUSTC_WORKSPACE_WRAPPER=clippy-driver) — only the slow dependency compiles
+# are cached.
+rustc-wrapper = "sccache"
+# sccache cannot cache incremental compilation; turning it off is what lets the cache be
+# used at all. The per-commit gate recompiles the whole workspace via clippy/nextest
+# anyway, so the lost in-worktree incremental reuse is marginal next to the dep-cache win.
+incremental = false
+
+# ── Cross-checkout cache-key normalization (SCCACHE_BASEDIRS) ─────────────────────
+# rustc bakes the absolute cwd into DWARF when debuginfo is on, so the same dependency
+# compiled under two different checkout paths produced two different sccache keys and never
+# shared. SCCACHE_BASEDIRS rewrites absolute paths under a base to relative before hashing.
+# `relative = true` resolves the value against THIS checkout's root (the parent of .cargo),
+# so each worktree strips against its own root and identical inputs hash identically
+# everywhere. Requires a current sccache (the feature postdates 0.10.0 — pin via
+# `aqua:mozilla/sccache` in .config/mise.toml; note the ~/.cargo/bin PATH-shadowing caveat).
+[env]
+SCCACHE_BASEDIRS = { value = "", relative = true, force = true }
+
+# ── Faster linker (mold via clang) ────────────────────────────────────────────────
+# Link time dominates incremental rebuilds. mold (apt install mold) driven through clang —
+# the most reliable Rust+mold recipe — makes every relink near-instant. If mold/clang are
+# ever uninstalled this breaks every build LOUDLY (reinstall, or comment this block out).
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]

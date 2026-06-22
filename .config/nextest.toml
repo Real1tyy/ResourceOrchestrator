@@ -1,0 +1,32 @@
+# cargo-nextest profiles. nextest auto-discovers this at <workspace-root>/.config/nextest.toml,
+# so it applies to every `cargo nextest run` (the check:backend / test:* tasks) with no flag.
+# See docs/TESTING.md.
+
+# Require a nextest new enough that `slow-timeout.terminate-after` is honored.
+nextest-version = { required = "0.9.90", recommended = "0.9.101" }
+
+# ── Default profile: slow-mark budget + hang-detector kill + contention retries ──
+# 1. `period = "1s"` MARKS a test slow at 1s — the budget-creep signal in the run output
+#    that keeps new slow tests from creeping in unnoticed. This is the real budget.
+# 2. `terminate-after = 30` is a HANG DETECTOR, not a budget gate: a healthy test never
+#    approaches 30s even when starved, but a genuine deadlock (infinite) is caught fast.
+# 3. `retries` ABSORB the contention flake: a test killed/failed under a load spike is
+#    retried; a pass-on-retry is reported FLAKY while the run PASSES. Exponential backoff +
+#    jitter delay the retry out of the same spike.
+#
+# Genuinely-slow tests are tagged `#[ignore = "slow-integration"]` (skipped here; run only
+# under `integration-slow` via the human `ci-full` path).
+[profile.default]
+# Fallback for an ungoverned run; NEXTEST_TEST_THREADS (mise [env]) overrides at gate time.
+test-threads = 8
+slow-timeout = { period = "1s", terminate-after = 30, grace-period = "0s" }
+retries = { backoff = "exponential", count = 2, delay = "2s", max-delay = "10s", jitter = true }
+
+# ── integration-slow: the human `ci-full` profile ───────────────────────────────
+# Lifts the budget for `#[ignore = "slow-integration"]`-tagged tests (real-SQLite race
+# stress, real-PTY spawns, etc.). A plain-string slow-timeout only MARKS slow (never
+# terminates), so heavy tests run to completion; 120s is the "this is pathological"
+# diagnostic threshold. Running the ignored tests is a CLI concern: check:backend:slow
+# passes `--run-ignored all`. This profile only sets the timeout.
+[profile.integration-slow]
+slow-timeout = "120s"

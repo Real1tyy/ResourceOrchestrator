@@ -10,17 +10,19 @@
 description = "Lint (clippy, warnings-as-errors) across the whole workspace"
 run = "cargo clippy --workspace --all-targets -- -D warnings"
 
+# `cargo +$RUSTFMT_TOOLCHAIN fmt` pins rustfmt to the toolchain in rust-toolchain.toml so a
+# leaked RUSTUP_TOOLCHAIN can't make the gate format differently from a clean shell.
 [format]
 description = "Auto-format the whole tree (rustfmt + prettier)"
 run = [
-  "cargo fmt --all",
+  "cargo +${RUSTFMT_TOOLCHAIN} fmt --all",
   "pnpm -C apps/web run format",
 ]
 
 ["format:check"]
 description = "Check formatting without writing (rustfmt + prettier)"
 run = [
-  "cargo fmt --all --check",
+  "cargo +${RUSTFMT_TOOLCHAIN} fmt --all --check",
   "pnpm -C apps/web run format:check",
 ]
 
