@@ -38,8 +38,8 @@ description = "Install the Playwright browser (chromium) the e2e suite needs"
 run = "pnpm -C apps/web exec playwright install chromium"
 
 ["test:stress"]
-description = "Backend stress/load harness — wired with the daemon (MVP-1)"
-run = 'echo "test:stress: no daemon to stress yet (see docs/specs/ perf harness spec)"; exit 0'
+description = "Backend stress/load harness (crates/roch-stress) — N-agents-at-once load scenario"
+run = "cargo run --profile profiling -p roch-stress"
 
 ["test:scripts"]
 description = "Test the scripts/ helpers (none have tests yet)"

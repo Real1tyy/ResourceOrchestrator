@@ -11,6 +11,8 @@ name = "roch"
 path = "src/main.rs"
 
 [dependencies]
+roch-daemon = { path = "../roch-daemon" }
+tracing = { workspace = true }
 
 [lints]
 workspace = true

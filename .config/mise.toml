@@ -31,6 +31,8 @@ lefthook = "latest"        # git-hook orchestrator (lefthook.yml)
 cocogitto = "latest"       # `cog` — Conventional Commits verifier (cog.toml)
 "aqua:nextest-rs/nextest/cargo-nextest" = "latest"  # project test runner (prebuilt; faster than `cargo test`)
 typos = "latest"           # spell-checker (check:spelling)
+hyperfine = "latest"       # CLI cold-start benchmarking (perf:cli-coldstart)
+"cargo:flamegraph" = "latest"  # cargo-flamegraph profiler (perf:flamegraph; compiles on first install)
 # Compile cache (.cargo/config.toml drives it via rustc-wrapper = "sccache"). Pin a current
 # release so SCCACHE_BASEDIRS (cross-checkout cache-key normalization) is available.
 # CAVEAT: `~/.cargo/bin` is AHEAD of mise on PATH, so a hand-installed `~/.cargo/bin/sccache`
@@ -66,4 +68,5 @@ includes = [
   ".config/tasks/repo/build.toml",
   ".config/tasks/repo/dev.toml",
   ".config/tasks/repo/codegen.toml",
+  ".config/tasks/repo/perf.toml",
 ]

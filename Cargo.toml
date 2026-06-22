@@ -7,6 +7,7 @@ members = [
     "crates/roch-linux",
     "crates/roch-daemon",
     "crates/roch-cli",
+    "crates/roch-stress",
 ]
 
 [workspace.package]
@@ -76,7 +77,8 @@ anyhow = "=1.0.102"
 # --- cli ---
 clap = { version = "=4.6.1", features = ["derive", "env"] }
 
-# --- test/dev helpers ---
+# --- perf + test/dev helpers ---
+criterion = { version = "=0.5.1", features = ["html_reports"] }
 tempfile = "=3.27.0"
 
 # --- internal crates ---
@@ -114,3 +116,10 @@ debug = 0
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+# Profiling/flamegraph build: release optimizations but KEEP symbols + frame pointers so
+# `cargo flamegraph` / perf symbolicate. Use via `mise run perf:flamegraph` / `--profile profiling`.
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = "none"

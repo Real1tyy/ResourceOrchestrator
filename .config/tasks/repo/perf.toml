@@ -1,0 +1,26 @@
+# ─── Performance + profiling (repo-owned) ─────────────────────────────────────
+# Perf is a day-one concern (NFR-1): a resource optimizer that hogs resources is
+# self-defeating. criterion micro-benches track hot-path regressions; cargo-flamegraph
+# profiles the daemon/CLI; hyperfine guards CLI cold-start; the stress harness
+# (crates/roch-stress) drives the N-agents-at-once load scenario. See docs/TESTING.md.
+#
+# Prefix-less task syntax is mandatory in an included task file.
+
+["perf:bench"]
+description = "Run criterion micro-benchmarks across the workspace"
+run = "cargo bench --workspace"
+
+["perf:flamegraph"]
+description = "Flame-graph the roch binary (needs cargo-flamegraph + perf; uses the symbol-preserving `profiling` profile)"
+run = "cargo flamegraph --profile profiling -p roch-cli --bin roch"
+
+["perf:cli-coldstart"]
+description = "Measure roch CLI cold-start latency with hyperfine (NFR-1 target: ~tens of ms in a hook)"
+run = [
+  "cargo build --profile profiling -p roch-cli",
+  "hyperfine --warmup 5 --shell=none ./target/profiling/roch",
+]
+
+["perf:measure"]
+description = "Run the perf suite: criterion benches + CLI cold-start"
+depends = ["perf:bench", "perf:cli-coldstart"]

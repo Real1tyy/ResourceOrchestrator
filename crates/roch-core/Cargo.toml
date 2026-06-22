@@ -4,10 +4,16 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-# Skeleton crate — no benches/tests dirs are wired yet.
-autobenches = false
 
 [dependencies]
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+# Perf-bench harness wired from day one (see benches/placeholder.rs). Run via `mise run perf:bench`.
+[[bench]]
+name = "placeholder"
+harness = false
 
 [lints]
 workspace = true
