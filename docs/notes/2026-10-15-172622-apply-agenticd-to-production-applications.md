@@ -1,9 +1,13 @@
 ---
 type: note
 id: note-01a14099-c8c7-75d3-8173-79bbdc8bd589
-status: inbox
-intended_for:
-tags: []
+status: processed
+intended_for: agent
+tags:
+  - agenticd
+  - resource-orchestrator
+  - read-only-access
+  - cli-mcp
 voice_url:
 related_docs: []
 created: 2026-10-15
