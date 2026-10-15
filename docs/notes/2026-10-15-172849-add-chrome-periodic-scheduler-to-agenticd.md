@@ -1,9 +1,12 @@
 ---
 type: note
 id: note-01a1409c-05e2-7440-a950-d21efcba2526
-status: inbox
-intended_for:
-tags: []
+status: processed
+intended_for: agent
+tags:
+  - agenticd
+  - periodic-scheduler
+  - resource-management
 voice_url:
 related_docs: []
 created: 2026-10-15
